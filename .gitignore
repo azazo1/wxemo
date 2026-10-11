@@ -1,0 +1,19 @@
+# Rust
+seedsearch/target/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地产物
+out/
+.tmp/
+seed-result.txt
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
