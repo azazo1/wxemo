@@ -104,7 +104,11 @@ enum SeedCommand {
     /// 导入已知 seed 或备份文件并派生密钥, 不验证微信密文.
     Import {
         /// 已知的十进制 seed, 与 --file 二选一.
-        #[arg(required_unless_present = "file", conflicts_with = "file", requires = "account")]
+        #[arg(
+            required_unless_present = "file",
+            conflicts_with = "file",
+            requires = "account"
+        )]
         seed: Option<u64>,
         /// 账号标识, 导入文件时省略表示导入全部记录.
         #[arg(long, required_unless_present = "file")]
@@ -243,7 +247,12 @@ fn main() -> ExitCode {
                 interactive,
             ),
             SeedCommand::Status { account } => commands::seed::manage::status(account.as_deref()),
-            SeedCommand::Import { seed, account, file, force } => {
+            SeedCommand::Import {
+                seed,
+                account,
+                file,
+                force,
+            } => {
                 if let Some(file) = file {
                     commands::seed::transfer::import_file(&file, account.as_deref(), force)
                 } else if let (Some(seed), Some(account)) = (seed, account) {
@@ -252,7 +261,11 @@ fn main() -> ExitCode {
                     Err(anyhow::anyhow!("导入需要 seed 与 --account, 或 --file"))
                 }
             }
-            SeedCommand::Export { account, out, force } => commands::seed::transfer::export(account.as_deref(), &out, force),
+            SeedCommand::Export {
+                account,
+                out,
+                force,
+            } => commands::seed::transfer::export(account.as_deref(), &out, force),
             SeedCommand::Remove { account, yes } => {
                 commands::seed::manage::remove(&account, yes, interactive)
             }
