@@ -88,8 +88,15 @@ pub struct Kernel {
 /// 既用于判断后端是否可用, 也供测试区分 "这台机器没有 GPU" (跳过)
 /// 与 "内核有问题" (失败), 两者含义完全不同.
 pub fn adapter_count() -> usize {
-    pollster::block_on(wgpu::Instance::default().enumerate_adapters(wgpu::Backends::all())).len()
+    pollster::block_on(wgpu::Instance::default().enumerate_adapters(SEARCH_BACKENDS)).len()
 }
+
+/// 搜后端时只看 wgpu 的一线支持.
+///
+/// 排除 GL: GL 的实际实现常常是 Mesa / llvmpipe 这类软件回退, 选中它只会更慢.
+/// 注意这不解决 Vulkan 枚举慢的问题 —— 实测某台 Windows 机器上 Vulkan 枚举要
+/// 14.4 秒 (总加载的 98%), 而 PRIMARY 包含 Vulkan. 那是驱动栈的问题, 见使用说明.
+const SEARCH_BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
 
 impl Kernel {
     /// 探测 adapter, 编译内核并建好全部缓冲.
@@ -152,8 +159,12 @@ impl Kernel {
             }
         }
 
-        let instance = wgpu::Instance::default();
-        let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+        let instance = wgpu::Instance::new({
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+            desc.backends = SEARCH_BACKENDS;
+            desc
+        });
+        let adapters = pollster::block_on(instance.enumerate_adapters(SEARCH_BACKENDS));
         if adapters.is_empty() {
             bail!("没有枚举到任何 wgpu adapter");
         }

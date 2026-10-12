@@ -80,7 +80,10 @@ pub const REQUIREMENT: &str = imp::REQUIREMENT;
 /// 每个任务块覆盖的 seed 数, 与标量后端保持一致, 进度条推进节奏相同.
 const CHUNK: u64 = 1 << 20;
 
-/// 每完成这么多任务块输出一次进度日志, 便于后台运行时观察.
+/// 每完成这么多任务块输出一次进度日志.
+///
+/// 只在进度条不可见时才打: 交互运行时条子本身就是进度, 再打日志纯属重复.
+/// 但输出被重定向或跑在 CI 里时 indicatif 会隐藏自己, 那时这条日志是唯一的进度来源.
 const LOG_EVERY: u64 = 128;
 
 /// 在 `spec` 指定的范围内并行搜索, 找到即返回.
@@ -111,6 +114,7 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Option<Hit> {
     let done = AtomicU64::new(0);
     let tasks = AtomicU64::new(0);
     let total = spec.end - spec.start;
+    let quiet = !bar.is_hidden();
 
     let starts: Vec<u64> = (spec.start..spec.end).step_by(CHUNK as usize).collect();
     debug!(tasks = starts.len(), chunk = CHUNK, "任务划分完成");
@@ -121,7 +125,7 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Option<Hit> {
         let finished = done.fetch_add(end - start, Ordering::Relaxed) + (end - start);
         bar.set_position(finished.min(total));
         let count = tasks.fetch_add(1, Ordering::Relaxed) + 1;
-        if count.is_multiple_of(LOG_EVERY) {
+        if !quiet && count.is_multiple_of(LOG_EVERY) {
             info!(done = finished, total, "进度");
         }
         found

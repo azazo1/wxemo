@@ -58,6 +58,8 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
 
     // GPU 路径自己驱动进度条, 让 spinner 在长时间计算时也能转.
     bar.enable_steady_tick(Duration::from_millis(100));
+    // 进度条可见时它本身就是进度, 不必再打日志; 被隐藏 (重定向或 CI) 时才补日志.
+    let quiet = !bar.is_hidden();
 
     let mut seed = spec.start;
     let mut batches = 0u64;
@@ -72,7 +74,7 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
         bar.inc(done);
         seed += done;
         batches += 1;
-        if last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+        if !quiet && last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
             last_log = Instant::now();
             info!(seed, end = spec.end, batches, "GPU 搜索进度");
         }

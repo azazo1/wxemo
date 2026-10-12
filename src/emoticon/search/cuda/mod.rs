@@ -6,6 +6,8 @@
 
 pub(crate) mod host;
 
+use std::time::{Duration, Instant};
+
 use anyhow::{bail, Context as _, Result};
 use indicatif::ProgressBar;
 use tracing::{debug, info, warn};
@@ -15,6 +17,11 @@ use host::{batch_size, Context, DeviceInfo};
 
 /// 单个 MD5 块能容纳的最大消息长度.
 const MAX_SINGLE_BLOCK_MESSAGE: usize = 55;
+
+/// 进度日志的最小间隔, 与 wgpu 后端对齐.
+///
+/// 按批次计数对批次大小敏感, 按时间节流才对扫描范围不敏感.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 /// 探测 CUDA 是否可用, 返回设备信息.
 pub fn probe() -> Result<DeviceInfo> {
@@ -41,6 +48,9 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
     );
 
     let mut position = 0u64;
+    // 进度条可见时它本身就是进度, 不必再打日志; 被隐藏 (重定向或 CI) 时才补日志.
+    let quiet = !bar.is_hidden();
+    let mut last_log = Instant::now();
     while position < total {
         let count = batch.min(total - position);
         let start = spec.start + position;
@@ -49,6 +59,11 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
             .with_context(|| format!("CUDA 批次失败: {start} .. {}", start + count))?;
         position += count;
         bar.set_position(position);
+
+        if !quiet && last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+            last_log = Instant::now();
+            info!(done = position, total, "CUDA 搜索进度");
+        }
 
         if !found {
             continue;
