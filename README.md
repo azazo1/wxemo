@@ -50,6 +50,7 @@ just dist
 
 源码按命令层 `src/commands/` 与表情核心 `src/emoticon/` 组织.
 加密方案与反汇编证据见 [分析文档](docs/crypto-analysis.md).
+CUDA 后端是可选编译的, 见下节.
 
 ## 加密方案
 
@@ -60,6 +61,23 @@ plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 
 
 账号标识不带目录末尾的 4 位十六进制后缀. 默认搜索范围为 `0..2^32`,
 可通过 `seed search --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
+
+## 搜索后端
+
+`seed search` 默认是 `--backend auto`: 有可用的 NVIDIA 设备就走 CUDA,
+否则回落 CPU 并记一条 `info` 日志. 也可以显式写 `--backend cpu` 或 `--backend cuda`,
+显式指定 `cuda` 而环境不可用时直接报错, 不会静默改用 CPU.
+
+CUDA 后端把 MD5 和 AES-128 都实现在 GPU 内核里, 一个线程试一个候选 seed,
+命中后再回到 CPU 用同一套判定逻辑复核. 它是可选编译的:
+
+```shell
+just build-cuda
+just test-cuda
+```
+
+默认的 `cargo build` 不带 `cuda` feature, 完全不受影响, macOS 上不需要 CUDA 工具链.
+构建方式, 支持的环境和实测数据见 [使用说明](docs/reproduction.md#cuda-后端).
 
 ## 免责声明
 

@@ -186,6 +186,11 @@ struct SeedArgs {
     /// 判定用的样本数量.
     #[arg(long, default_value_t = 3)]
     samples: usize,
+
+    /// 搜索后端: auto 优先用 CUDA 并在不可用时回落 CPU, cpu 只用 CPU,
+    /// cuda 强制走 GPU (不可用时直接报错).
+    #[arg(long, default_value = "auto")]
+    backend: search::Backend,
 }
 
 #[derive(Args, Debug)]
@@ -275,6 +280,7 @@ fn main() -> ExitCode {
                     end: args.end,
                     threads: args.threads,
                     sample_count: args.samples,
+                    backend: args.backend,
                 },
                 interactive,
             ),

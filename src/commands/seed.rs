@@ -14,7 +14,7 @@ use tracing::{debug, info};
 use crate::config::{Auth, Config};
 use crate::crypto::MAX_MESSAGE;
 use crate::discover;
-use crate::search::{run, Sample, SearchSpec};
+use crate::search::{self, Backend, Sample, SearchSpec};
 
 /// 搜索参数.
 pub struct SeedOptions {
@@ -32,6 +32,8 @@ pub struct SeedOptions {
     pub threads: Option<usize>,
     /// 用于判定的样本数量.
     pub sample_count: usize,
+    /// 搜索后端.
+    pub backend: Backend,
 }
 
 /// 执行 seed 搜索.
@@ -107,14 +109,17 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
         samples,
     };
 
+    // 后端在搜索前解析: 显式指定 cuda 但不可用时要立刻报错, 而不是跑完才说.
+    let backend = search::resolve(options.backend)?;
+
     let started = Instant::now();
-    let hit = run(&spec, &bar);
+    let hit = search::run(&spec, &bar, backend)?;
     bar.finish_and_clear();
     let elapsed = started.elapsed();
 
     let Some(hit) = hit else {
         bail!(
-            "在 {start} .. {end} 范围内没有找到 {wxid} 的 seed, 用时 {:.1} 秒",
+            "在 {start} .. {end} 范围内没有找到 {wxid} 的 seed, 用时 {:.3} 秒",
             elapsed.as_secs_f64()
         );
     };
@@ -126,6 +131,7 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
         key = %crate::config::hex(&hit.key),
         format = %hit.format,
         padding_ok = hit.padding_ok,
+        backend = %backend,
         seconds = elapsed.as_secs_f64(),
         rate = rate as u64,
         "命中"
@@ -139,7 +145,7 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
     println!("填充合法 = {}", hit.padding_ok);
     println!("命中样本 = {}", hit.matched.join(", "));
     println!(
-        "用时  = {:.1} 秒 ({:.0} 候选/秒)",
+        "用时  = {:.3} 秒 ({:.0} 候选/秒)",
         elapsed.as_secs_f64(),
         rate
     );
