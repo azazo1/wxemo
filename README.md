@@ -14,6 +14,7 @@ Linux 归档使用 GNU 动态链接, 需要 glibc 2.39 或更新版本.
 ```shell
 wxemo accounts
 wxemo seed search
+wxemo seed search --backend metal
 wxemo extract --out out/emoticons --manifest
 wxemo decode out/emoticons --out out/images
 ```
@@ -93,6 +94,18 @@ just test-cuda
 
 默认的 `cargo build` 不带 `cuda` feature, 完全不受影响, macOS 上不需要 CUDA 工具链.
 构建方式, 支持的环境和实测数据见 [使用说明](docs/reproduction.md#cuda-后端).
+
+## 计算后端
+
+`seed search --backend <auto|cpu|metal>` 选择搜索用的硬件, 默认 `auto`:
+有可用的 Metal 设备就用 Metal, 否则回落 CPU, 并在日志里写明实际用的设备和后端.
+显式指定 `metal` 而设备不可用时直接报错, 不静默回落.
+
+Metal 后端是 macOS 上的原生 compute 实现: 每个 GPU 线程处理一个候选 seed,
+在 kernel 里完成十进制拼串, 单块 MD5, AES-128 密钥扩展与首块解密.
+MSL 源码内嵌在二进制里, 在运行期由驱动自带的编译器编译,
+不需要安装 Xcode 的 Metal Toolchain 组件.
+两个后端的命中判定条件与命中后的整文件复核完全共用, 只可能在速度上有差别.
 
 ## 免责声明
 

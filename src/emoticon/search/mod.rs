@@ -13,6 +13,7 @@
 //! - `scalar`: 每个候选独立做标量 MD5 与 AES, 由 rayon 在多个核心上并行.
 //! - `simd`: 一批候选共用一次向量化 MD5, 每路各自做 AES 首块判定.
 //! - `cuda`: GPU 只筛选候选, 命中后回到 `confirm` 复核 (需要 `cuda` feature).
+//! - `metal`: macOS 原生 Metal compute, 同样只筛选, 复核走 `confirm`.
 //!
 //! 选路由 [`Backend::resolve`] 决定, 显式指定某个后端而本机不支持时直接报错,
 //! 不会静默退回标量路径.
@@ -23,6 +24,9 @@ mod simd;
 #[cfg(feature = "cuda")]
 pub(crate) mod cuda;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod metal;
+
 #[cfg(test)]
 pub(crate) mod testing;
 
@@ -31,7 +35,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use indicatif::ProgressBar;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::crypto::{
     decrypt_all, decrypt_first_block, derive_key, match_magic, new_cipher, valid_padding,
@@ -83,7 +87,7 @@ pub struct Hit {
 /// 用户在命令行上请求的后端.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Backend {
-    /// 按本机能力自动选择: CUDA 优先, 其次 SIMD, 最后标量.
+    /// 按本机能力自动选择: CUDA 优先, 其次 Metal, 再次 SIMD, 最后标量.
     #[default]
     Auto,
     /// 标量路径, 只靠多核并行.
@@ -92,6 +96,8 @@ pub enum Backend {
     Simd,
     /// CUDA 后端, 不可用时明确报错.
     Cuda,
+    /// macOS Metal 后端, 不可用时明确报错.
+    Metal,
 }
 
 impl FromStr for Backend {
@@ -103,8 +109,9 @@ impl FromStr for Backend {
             "cpu" => Ok(Backend::Cpu),
             "simd" => Ok(Backend::Simd),
             "cuda" => Ok(Backend::Cuda),
+            "metal" => Ok(Backend::Metal),
             other => Err(format!(
-                "未知后端 {other}, 可选 auto / cpu / simd / cuda"
+                "未知后端 {other}, 可选 auto / cpu / simd / cuda / metal"
             )),
         }
     }
@@ -117,6 +124,7 @@ impl fmt::Display for Backend {
             Backend::Cpu => "cpu",
             Backend::Simd => "simd",
             Backend::Cuda => "cuda",
+            Backend::Metal => "metal",
         };
         formatter.write_str(name)
     }
@@ -139,22 +147,43 @@ impl Backend {
                 Ok(()) => Ok(Resolved::Cuda),
                 Err(reason) => bail!("指定了 --backend cuda 但 CUDA 不可用: {reason:#}"),
             },
-            Backend::Auto => match cuda_available() {
-                Ok(()) => {
-                    info!("检测到可用 CUDA 设备, 使用 cuda 后端");
-                    Ok(Resolved::Cuda)
-                }
-                Err(reason) => {
-                    if simd::available() {
-                        info!("CUDA 不可用, 使用 simd 后端");
-                        return Ok(Resolved::Simd);
-                    }
-                    warn!(reason = %format!("{reason:#}"), "加速后端不可用, 回落到 cpu 后端");
-                    Ok(Resolved::Cpu)
-                }
+            Backend::Metal => match metal_available() {
+                Some(()) => Ok(Resolved::Metal),
+                None => bail!("指定了 --backend metal 但本机没有可用的 Metal 设备"),
             },
+            Backend::Auto => {
+                // GPU 优先: CUDA 的算力上限最高, 其次是原生 Metal, 再退向量化与标量.
+                if cuda_available().is_ok() {
+                    info!("检测到可用 CUDA 设备, 使用 cuda 后端");
+                    return Ok(Resolved::Cuda);
+                }
+                if metal_available().is_some() {
+                    info!("使用 metal 后端");
+                    return Ok(Resolved::Metal);
+                }
+                if simd::available() {
+                    info!("使用 simd 后端");
+                    return Ok(Resolved::Simd);
+                }
+                info!("使用 cpu 后端");
+                Ok(Resolved::Cpu)
+            }
         }
     }
+}
+
+/// 探测 Metal 设备.
+#[cfg(target_os = "macos")]
+fn metal_available() -> Option<()> {
+    metal::device_name().map(|name| {
+        info!(device = %name, "Metal 设备就绪");
+    })
+}
+
+/// 探测 Metal 设备.
+#[cfg(not(target_os = "macos"))]
+fn metal_available() -> Option<()> {
+    None
 }
 
 /// 检查 CUDA 是否可用.
@@ -184,6 +213,8 @@ pub enum Resolved {
     Simd,
     /// CUDA.
     Cuda,
+    /// macOS Metal.
+    Metal,
 }
 
 impl fmt::Display for Resolved {
@@ -192,6 +223,7 @@ impl fmt::Display for Resolved {
             Resolved::Cpu => "cpu",
             Resolved::Simd => "simd",
             Resolved::Cuda => "cuda",
+            Resolved::Metal => "metal",
         };
         formatter.write_str(name)
     }
@@ -204,6 +236,7 @@ impl Resolved {
             Resolved::Cpu => 1,
             Resolved::Simd => simd::LANES,
             Resolved::Cuda => 1,
+            Resolved::Metal => 1,
         }
     }
 }
@@ -218,6 +251,10 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar, backend: Resolved) -> Result<Op
         Resolved::Cuda => cuda::run(spec, bar),
         #[cfg(not(feature = "cuda"))]
         Resolved::Cuda => bail!("本二进制编译时没有开启 cuda feature"),
+        #[cfg(target_os = "macos")]
+        Resolved::Metal => metal::run(spec, bar),
+        #[cfg(not(target_os = "macos"))]
+        Resolved::Metal => bail!("metal 后端只在 macOS 上可用"),
     }
 }
 
@@ -233,7 +270,7 @@ pub(crate) fn strong_magic(block: &[u8; 16]) -> bool {
 ///
 /// GPU 内核只负责把候选筛出来, 真正的判定与 `Hit` 的构造都回到这里,
 /// 保证各后端的判定语义完全一致.
-#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+#[cfg_attr(not(any(feature = "cuda", target_os = "macos")), allow(dead_code))]
 pub(crate) fn confirm(spec: &SearchSpec, seed: u64, wxid_index: usize) -> Option<Hit> {
     let wxid = spec.wxids.get(wxid_index)?;
     let mut message = [0u8; MAX_MESSAGE];
@@ -242,13 +279,8 @@ pub(crate) fn confirm(spec: &SearchSpec, seed: u64, wxid_index: usize) -> Option
 }
 
 /// 用给定密钥复核一个候选, 命中则构造 `Hit`.
-#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
-pub(crate) fn verify_hit(
-    seed: u64,
-    wxid: &[u8],
-    key: &[u8; 16],
-    spec: &SearchSpec,
-) -> Option<Hit> {
+#[cfg_attr(not(any(feature = "cuda", target_os = "macos")), allow(dead_code))]
+pub(crate) fn verify_hit(seed: u64, wxid: &[u8], key: &[u8; 16], spec: &SearchSpec) -> Option<Hit> {
     let cipher = new_cipher(key);
 
     let mut best: Option<(&'static str, usize)> = None;
@@ -439,7 +471,7 @@ mod tests {
     fn auto_works_without_cuda_feature() {
         assert!(matches!(
             Backend::Auto.resolve().unwrap(),
-            Resolved::Cpu | Resolved::Simd
+            Resolved::Cpu | Resolved::Simd | Resolved::Metal
         ));
     }
 }

@@ -45,3 +45,12 @@ pub fn key_for(seed: u64, wxid: &[u8]) -> [u8; 16] {
     let mut message = [0u8; MAX_MESSAGE];
     derive_key(seed, wxid, &mut message)
 }
+
+/// 三个覆盖不同魔数强度的样本 (png 8 字节, gif 6 字节, jpg 3 字节).
+pub fn three_samples(key: &[u8; 16]) -> Vec<Sample> {
+    vec![
+        sample("a.png", encrypt(key, b"\x89PNG\r\n\x1a\n0123456789abcdef")),
+        sample("b.gif", encrypt(key, b"GIF89a0123456789abcdef")),
+        sample("c.jpg", encrypt(key, b"\xff\xd8\xff\xe00123456789abcdef")),
+    ]
+}
