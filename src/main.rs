@@ -58,6 +58,20 @@ enum Command {
     /// 用已知密钥解密并还原表情包.
     Extract(ExtractArgs),
 
+    /// 将已解密 WXGF 完整转为 PNG/APNG, 保留动画和透明度.
+    Decode(DecodeArgs),
+
+    /// 隔离原生库的内部工作进程.
+    #[command(name = "__decode-wxgf", hide = true)]
+    DecodeWorker {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        decoder_lib: PathBuf,
+    },
+
     /// 检查环境与配置是否就绪.
     Doctor(DoctorArgs),
 }
@@ -210,6 +224,24 @@ struct ExtractArgs {
 }
 
 #[derive(Args, Debug)]
+struct DecodeArgs {
+    /// 已解密 WXGF 文件, 或递归扫描的目录 (目录中仅处理 .wxgf).
+    input: PathBuf,
+
+    /// 输出目录, 动画与静态图片均保存为 .png, 不覆盖已有文件.
+    #[arg(long, short, default_value = "out/decoded")]
+    out: PathBuf,
+
+    /// 用户已有的可信 WXAM 动态库, 不下载或分发微信媒体库.
+    #[arg(long)]
+    decoder_lib: Option<PathBuf>,
+
+    /// 每个文件的原生解码超时秒数.
+    #[arg(long, default_value_t = 120)]
+    timeout_secs: u64,
+}
+
+#[derive(Args, Debug)]
 struct DoctorArgs {
     /// 额外/替代的数据根目录, 可重复.
     #[arg(long = "data-root")]
@@ -283,6 +315,17 @@ fn main() -> ExitCode {
             },
             interactive,
         ),
+        Command::Decode(args) => commands::decode::run(commands::decode::DecodeOptions {
+            input: args.input,
+            out: args.out,
+            decoder_lib: args.decoder_lib,
+            timeout_secs: args.timeout_secs,
+        }),
+        Command::DecodeWorker {
+            input,
+            out,
+            decoder_lib,
+        } => commands::decode::run_worker(&input, &out, &decoder_lib),
         Command::Doctor(args) => commands::doctor::run(&args.data_roots),
     };
 

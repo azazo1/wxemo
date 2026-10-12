@@ -2,3 +2,4 @@
 pub(crate) mod container;
 pub(crate) mod crypto;
 pub(crate) mod search;
+pub(crate) mod wxgf;

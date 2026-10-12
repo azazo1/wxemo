@@ -15,6 +15,7 @@ Linux 归档使用 GNU 动态链接, 需要 glibc 2.39 或更新版本.
 wxemo accounts
 wxemo seed search
 wxemo extract --out out/emoticons --manifest
+wxemo decode out/emoticons --out out/images
 ```
 
 默认目录会自动发现. 使用自定义位置时, 运行
@@ -27,7 +28,9 @@ wxemo extract --out out/emoticons --manifest
 - `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值或备份,
   `seed export` 导出敏感备份文件, `seed remove` 删除记录. `extract` 自动复用保存的密钥.
 - PNG / GIF / JPEG / WebP 按格式结构拆分. 未识别片段保留为 `.bin`.
-- `.wxgf` 原样保留, 不承诺直接播放或转码. 使用 `--no-split` 可保留整个明文容器.
+- `.wxgf` 明文原样保留. `decode` 使用本机已有的微信媒体库导出完整 PNG/APNG,
+  保留动画时序和透明度. 原生库不可用时明确报错, 平台条件见使用说明.
+  使用 `--no-split` 可保留整个明文容器.
 - `wxemo doctor` 检查配置与账号发现情况, `--verbose` 显示诊断日志.
 
 更多用法见 [使用说明](docs/reproduction.md), 数据格式见 [格式说明](docs/format-notes.md).

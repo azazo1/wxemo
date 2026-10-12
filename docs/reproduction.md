@@ -134,11 +134,47 @@ wxemo extract --account wxid_example123456 --out out/emoticons --manifest
 格式解析只负责确定边界, 不等价于图像解码或 PNG CRC 校验.
 总字节数校验可以发现数据遗漏, 但不能独立证明密钥正确.
 
-## wxgf
+## WXGF 图片与动画解码
 
-解密后的 wxgf 是微信私有容器, 可能包含 HEVC 码流.
-本工具尚未实现该容器的播放或转码, 也未确定其长度边界,
-因此从 wxgf 头部开始保留剩余明文, 不按内部魔数猜测拆分.
+`extract` 仍保留完整 `.wxgf` 明文, 不改变原来的字节守恒行为.
+使用独立的 `decode` 命令转成可打开的 PNG/APNG, 不读取账号配置或密钥:
+
+```shell
+wxemo decode image.wxgf --out out/images
+wxemo decode out/emoticons --out out/images
+wxemo decode out/emoticons --out out/images --decoder-lib <可信的原生媒体库路径>
+```
+
+从源码运行相同操作可用 `just run decode <输入> --out <输出目录>`.
+单文件按文件头验证, 目录输入递归处理 `.wxgf` (忽略后缀大小写), 不跟随目录内的符号链接.
+输出保留子目录结构, 后缀替换为 `.png`. 多帧文件内部为 APNG, 使用支持 APNG 的浏览器
+或图片查看器打开. 输出目录不能等于输入目录或位于其内部, 已有图片不覆盖.
+
+### 原生解码库
+
+完整动画不能只拼接 HEVC 码流: WXGF 还保存帧时序, 蒙版与原始画布尺寸.
+`decode` 使用用户本机已有的版本化 `wxam_dec_wxam2pic_5` 接口, `mode=2` 输出 PNG/APNG,
+保留全部动画帧, 循环信息, 逐帧时长和 RGBA 透明度, 不转换成只有二值透明度的 GIF.
+
+- macOS 自动查找系统或用户 Applications 下已有微信的 `MultiMediaDyn.framework`.
+- Windows 自动查找常见 Tencent 安装目录及版本子目录中的 `VoipEngine.dll`.
+  非默认位置用 `--decoder-lib` 指定, 依赖 DLL 需与媒体库同目录或位于系统安全搜索目录.
+- Linux 不承诺存在可用媒体库, 需要显式提供当前系统和架构兼容的原生库.
+  Windows DLL 不能直接在 Linux 加载. 找不到兼容库时明确报错, 不静默退化成动画首帧.
+- 库的 CPU 架构必须与 wxemo 一致. 本项目不下载, 复制或分发微信媒体库, 也不需要 FFmpeg.
+  仅加载可信的本机微信库, 不使用来历不明的动态库.
+
+每个文件在独立工作进程中解码, 私有库崩溃或超时不会终止其他文件的处理.
+默认单文件超时为 120 秒, 可用 `--timeout-secs` 调整. 任一文件失败时最终返回非零退出码,
+已成功的图片保留. 输入限制 64 MiB, 编码输出限制 128 MiB, 总帧像素数限制 256 Mi 个,
+超过限制明确报错. 支持已验证的 WXGF 布局版本 0 和 2, 未知版本不猜测处理.
+
+写出前校验 PNG chunk CRC, APNG 序号, 尺寸和帧数与 WXGF 头部一致,
+剔除原生库在 IEND 后追加的私有尾注. 校验不通过的文件不发布图片.
+这些检查用于防止截断或首帧输出被当作成功, 不是对所有微信版本的兼容性保证.
+原生接口参考 [公开 WXAM 调用示例](https://github.com/HShiDianLu/wx-dat2img/blob/main/main.py),
+完整 APNG 行为已在 macOS arm64 上用真实静态, 动画与透明样本验证; Windows / Linux
+仍需在相应运行环境验证, 不能仅凭接口名相同认定行为一致.
 
 ## 排查问题
 
@@ -157,3 +193,13 @@ just lint
 
 测试覆盖已知种子的搜索, CBC 解密, 截断输入保留,
 容器边界, 嵌入魔数去重以及未知数据的逐字节重组.
+WXGF 测试覆盖头部版本, PNG/APNG 完整帧数与 CRC, 空数据分块,
+原生工作进程失败后的继续处理, 超时, 输出防覆盖和路径越界.
+合成媒体库及透明 APNG 用于可移植测试, 不依赖 CI 安装微信或持有私人样本.
+
+本机 macOS arm64 的额外验证处理了 263 个真实 WXGF 文件:
+181 个静态图片, 82 个动画, 合计 3195 帧均可由独立图片解码器读取.
+90 个 GIF 类容器 (含单帧) 的逐帧时长与源记录一致,
+4 个半透明样本的 alpha 像素与原 HEVC 蒙版逐像素一致.
+原文件 SHA-256 在转换前后不变. 此结果只说明该样本集和媒体库组合已验证,
+不代表所有 WXGF 布局或其他平台的兼容性保证.
