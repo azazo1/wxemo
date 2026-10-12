@@ -95,7 +95,9 @@ fn find_account_roots(root: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry.with_context(|| format!("读取目录项失败: {}", dir.display()))?;
             let path = entry.path();
             // 不跟随符号链接, 避免在数据目录中绕圈.
-            let kind = entry.file_type().with_context(|| format!("读取文件类型失败: {}", path.display()))?;
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("读取文件类型失败: {}", path.display()))?;
             if kind.is_dir() {
                 queue.push((path, depth + 1));
             }
@@ -134,9 +136,12 @@ pub fn find_accounts(roots: &[PathBuf]) -> Result<Vec<Account>> {
                 continue;
             };
             for entry in entries {
-                let entry = entry.with_context(|| format!("读取目录项失败: {}", account_root.display()))?;
+                let entry =
+                    entry.with_context(|| format!("读取目录项失败: {}", account_root.display()))?;
                 let path = entry.path();
-                let kind = entry.file_type().with_context(|| format!("读取文件类型失败: {}", path.display()))?;
+                let kind = entry
+                    .file_type()
+                    .with_context(|| format!("读取文件类型失败: {}", path.display()))?;
                 if kind.is_dir() && looks_like_account(&path)? {
                     candidates.push(path);
                 }

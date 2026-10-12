@@ -41,7 +41,10 @@ mod tests {
     #[test]
     fn denied_directory_keeps_original_io_error() {
         use std::os::unix::fs::PermissionsExt;
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join(".tmp");
         let root = parent.join(format!("access-denied-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -59,7 +62,10 @@ mod tests {
 
     #[test]
     fn missing_directory_is_optional_but_non_directory_is_an_error() {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join(".tmp");
         let root = parent.join(format!("access-test-{}-{nonce}", std::process::id()));
         assert!(read_directory(&root).unwrap().is_none());
