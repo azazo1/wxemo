@@ -208,15 +208,26 @@ fn metal_available() -> Option<()> {
 }
 
 /// 检查 CUDA 是否可用.
+///
+/// 除了设备本身, 还要确认随二进制发布的内核镜像能在这个设备上加载.
+/// 镜像只在对应计算能力的设备上有效, 在这里挡住, `auto` 才能回落到别的后端.
 #[cfg(feature = "cuda")]
 fn cuda_available() -> Result<()> {
-    cuda::probe().map(|info| {
-        info!(
-            device = %info.name,
-            compute_capability = %format!("{}.{}", info.major, info.minor),
-            "CUDA 设备就绪"
+    let info = cuda::host::probe()?;
+    if !cuda::host::image_matches(&info) {
+        bail!(
+            "设备计算能力 {}.{} 与内核编译目标 sm_{} 不一致",
+            info.major,
+            info.minor,
+            cuda::host::TARGET_SM
         );
-    })
+    }
+    info!(
+        device = %info.name,
+        compute_capability = %format!("{}.{}", info.major, info.minor),
+        "CUDA 设备就绪"
+    );
+    Ok(())
 }
 
 /// 检查 CUDA 是否可用.

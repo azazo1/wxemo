@@ -54,6 +54,12 @@ pub fn compile() {
     println!("cargo:rerun-if-env-changed=WXEMO_CUDA_ARCH");
 
     let arch = env::var("WXEMO_CUDA_ARCH").unwrap_or_else(|_| DEFAULT_ARCH.to_string());
+    // 把目标计算能力告诉运行期: 镜像只能在对应能力的设备上加载, 运行期要据此判断
+    // 能不能真的用 CUDA, 而不是等搜索开始才拿到驱动的加载失败.
+    println!(
+        "cargo:rustc-env=WXEMO_CUDA_SM={}",
+        arch.trim_start_matches("sm_")
+    );
     let nvcc = find_nvcc().unwrap_or_else(|| {
         panic!("找不到 nvcc, 请安装 CUDA Toolkit, 或用 WXEMO_CUDA_NVCC 指定 nvcc 的完整路径")
     });

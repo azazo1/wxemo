@@ -151,11 +151,26 @@ mod tests {
         assert!(error.contains("单块 MD5"), "{error}");
     }
 
+    /// 本机是否真能跑 CUDA 内核: 既要有设备, 镜像也要匹配它的计算能力.
+    ///
+    /// 与 wgpu / metal 的跳过逻辑一致: 没有可用设备时跳过而不是失败,
+    /// 因为 CI 上有编译 CUDA 的机器却没有显卡, 那种环境下失败没有诊断价值.
+    fn runnable() -> bool {
+        host::probe()
+            .map(|info| host::image_matches(&info))
+            .unwrap_or(false)
+    }
+
     /// 真机测试: 在窄范围里让 GPU 找已知 seed, 并核对派生出的密钥.
     ///
-    /// 只在开启 cuda feature 的机器上编译, 需要一张可用的 NVIDIA 卡.
+    /// 只在开启 cuda feature 且有可用设备的机器上真正执行.
     #[test]
     fn cuda_backend_finds_known_seed_and_derives_key() {
+        if !runnable() {
+            eprintln!("跳过 CUDA 正确性测试: 本机没有可用设备或内核镜像与设备不匹配");
+            return;
+        }
+
         let seed = 123456789u64;
         let wxid = b"wxid_example123456";
         let mut message = [0u8; MAX_MESSAGE];
@@ -177,6 +192,11 @@ mod tests {
     /// 真机测试: 范围不含已知 seed 时必须报告未命中.
     #[test]
     fn cuda_backend_reports_nothing_outside_range() {
+        if !runnable() {
+            eprintln!("跳过 CUDA 空范围测试: 本机没有可用设备或内核镜像与设备不匹配");
+            return;
+        }
+
         let spec = spec_for(123456789, b"wxid_example123456", 200000000, 200100000);
         let bar = ProgressBar::hidden();
         let hit = run(&spec, &bar).expect("CUDA 搜索应当成功");

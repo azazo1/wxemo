@@ -9,7 +9,7 @@
 
 pub mod host;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use indicatif::ProgressBar;
@@ -22,8 +22,11 @@ use host::{Kernel, MAX_HITS};
 /// GPU 能处理的 seed 上界: seed 在着色器里是 u32.
 pub const SEED_LIMIT: u64 = 1 << 32;
 
-/// 每完成这么多批输出一次进度日志.
-const LOG_EVERY: u64 = 64;
+/// 进度日志的最小间隔.
+///
+/// 不能按批次计数: 一批能覆盖几百万个候选, 批次推进很快, 固定批数间隔会变成
+/// 每秒刷一条. 按时间节流才对范围大小不敏感, 也仍能让人看出进程是否卡住.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(30);
 
 /// 在 `[spec.start, spec.end)` 上跑 GPU 搜索, 范围必须已经裁剪到 u32 之内.
 ///
@@ -58,6 +61,7 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
 
     let mut seed = spec.start;
     let mut batches = 0u64;
+    let mut last_log = Instant::now();
     while seed < spec.end {
         let span = (spec.end - seed).min(batch_seeds as u64) as u32;
         let base = seed as u32;
@@ -68,8 +72,9 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar) -> Result<Option<Hit>> {
         bar.inc(done);
         seed += done;
         batches += 1;
-        if batches.is_multiple_of(LOG_EVERY) {
-            info!(seed, end = spec.end, "GPU 搜索进度");
+        if last_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+            last_log = Instant::now();
+            info!(seed, end = spec.end, batches, "GPU 搜索进度");
         }
 
         if hits.is_empty() {

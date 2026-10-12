@@ -69,6 +69,18 @@ pub struct DeviceInfo {
     pub multiprocessors: i32,
 }
 
+/// 构建期内核的目标计算能力, 形如 `89`, 由 `build.rs` 注入.
+pub const TARGET_SM: &str = env!("WXEMO_CUDA_SM");
+
+/// 随二进制发布的内核镜像能否在给定设备上加载.
+///
+/// 镜像是构建期按单个计算能力编出来的 SASS, 驱动只肯在对应能力的设备上加载它.
+/// 不匹配时要在选后端阶段就发现, 好让 `auto` 回落到别的后端,
+/// 而不是等到搜索开始才抛一个驱动层的加载失败.
+pub fn image_matches(info: &DeviceInfo) -> bool {
+    format!("{}{}", info.major, info.minor) == TARGET_SM
+}
+
 // ------------------------------------------------------------ 驱动符号表
 
 type CuInit = unsafe extern "C" fn(u32) -> CuResult;

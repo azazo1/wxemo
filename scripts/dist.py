@@ -19,6 +19,8 @@ SMOKE_ARGS = ["--version"]
 # 需要交叉编译时设置, 例如 aarch64-unknown-linux-musl;
 # 交叉编译的产物无法本机执行, 只能做文件格式检查, 并用 TARGET_PLATFORM / TARGET_ARCH 命名.
 RUST_TARGET = os.environ.get("RUST_TARGET", "")
+# 额外的 cargo feature, 例如 "cuda". 平台不支持时留空即可.
+CARGO_FEATURES = os.environ.get("WXEMO_CARGO_FEATURES", "")
 
 
 def package_version_fallback():
@@ -53,6 +55,8 @@ def main():
     cargo_args = ["cargo", "build", "--release", "--locked"]
     if RUST_TARGET:
         cargo_args += ["--target", RUST_TARGET]
+    if CARGO_FEATURES:
+        cargo_args += ["--features", CARGO_FEATURES]
     rc.run(cargo_args, env=cargo_env, capture=False)
 
     binary = BINARY_NAME + (".exe" if target_platform == "windows" else "")

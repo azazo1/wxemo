@@ -95,13 +95,18 @@ jobs:
     needs: version
     name: ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    env:
+      # 需要 CUDA 的产物在这里带上 feature, 其余平台保持默认构建.
+      CARGO_EXTRA_ARGS: ${{ matrix.cuda && '--features cuda' || '' }}
+      WXEMO_CARGO_FEATURES: ${{ matrix.cuda && 'cuda' || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { runner: ubuntu-24.04, platform: linux, arch: x86_64 }
           - { runner: ubuntu-24.04-arm, platform: linux, arch: aarch64 }
-          - { runner: windows-2025, platform: windows, arch: x86_64 }
+          # 只有 Windows x86_64 带 CUDA: NVIDIA 没有面向 Windows on ARM 的 CUDA 工具链.
+          - { runner: windows-2025, platform: windows, arch: x86_64, cuda: true }
           - { runner: windows-11-arm, platform: windows, arch: aarch64 }
           - { runner: macos-15-intel, platform: macos, arch: x86_64 }
           - { runner: macos-15, platform: macos, arch: aarch64 }
@@ -121,12 +126,30 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.platform }}-${{ matrix.arch }}
+      - name: 安装 CUDA 工具链
+        if: matrix.cuda
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prefix = Join-Path $env:RUNNER_TEMP "cudatoolkit"
+          $conda = "C:\Miniconda\Scripts\conda.exe"
+          if (-not (Test-Path $conda)) { throw "找不到 conda: $conda" }
+          # 从 NVIDIA 官方频道安装. conda 会自行解析 cuda-nvcc-impl / tools / dev 等传递依赖.
+          & $conda create --yes --quiet --prefix $prefix --channel nvidia `
+            cuda-nvcc cuda-crt cuda-nvvm cuda-cudart-dev
+          if ($LASTEXITCODE -ne 0) { throw "conda 安装 CUDA 工具链失败" }
+          # 不假设 nvcc 落在哪个子目录, 建好之后在 prefix 里找一次.
+          $nvcc = Get-ChildItem -Path $prefix -Filter "nvcc.exe" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $nvcc) { throw "在 $prefix 下找不到 nvcc.exe" }
+          Write-Host "使用 nvcc: $($nvcc.FullName)"
+          "WXEMO_CUDA_NVCC=$($nvcc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: 检查格式
         run: cargo fmt --check
       - name: 单元测试
-        run: cargo test --locked
+        run: cargo test --locked $CARGO_EXTRA_ARGS
       - name: 严格静态检查
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets $CARGO_EXTRA_ARGS -- -D warnings
       - name: 构建并校验归档
         env:
           PROJECT_BUILD_VERSION: ${{ needs.version.outputs.build_version }}
