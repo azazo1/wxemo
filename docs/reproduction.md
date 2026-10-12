@@ -73,6 +73,28 @@ wxemo seed search --account wxid_example123456
 seed 的来源在二进制接口中是 64 位整数, `0..2^32` 是默认搜索范围,
 不是对所有微信版本取值范围的保证.
 
+### 计算后端
+
+`--backend <auto|cpu|metal>` 选择用哪种硬件搜索, 默认 `auto`.
+
+| 取值 | 行为 |
+| --- | --- |
+| `auto` | macOS 上能用 Metal 就用 Metal, 否则回落 CPU. 日志会写明实际选了哪个和哪个设备 |
+| `cpu` | 只用 CPU 的 rayon 多核实现, 所有平台可用 |
+| `metal` | 只用 macOS 的 Metal compute, 设备不可用时明确报错, 不静默回落 |
+
+```shell
+wxemo seed search --account wxid_example123456 --backend metal
+wxemo seed search --account wxid_example123456 --backend cpu
+```
+
+两个后端的命中判定和命中后的整文件复核是同一段代码, 结果只可能在速度上有差别.
+Metal 后端的 MSL 源码在运行期由驱动自带的编译器编译, 不需要安装构建期的
+metal 编译器 (`MetalToolchain` 组件缺少时也能用).
+首次提交前有约 0.3 秒的运行期编译开销, 搜索范围越大这部分占比越低.
+`--threads` 只影响 CPU 后端, Metal 后端的并行度由 GPU 决定.
+非 macOS 平台上 `--backend metal` 会直接报错, `auto` 会说明回落原因.
+
 ## 管理 seed 记录
 
 ```shell

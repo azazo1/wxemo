@@ -186,6 +186,31 @@ struct SeedArgs {
     /// 判定用的样本数量.
     #[arg(long, default_value_t = 3)]
     samples: usize,
+
+    /// 计算后端. auto 优先用 Metal, 不可用时回落 CPU.
+    #[arg(long, value_enum, default_value_t = BackendArg::Auto)]
+    backend: BackendArg,
+}
+
+/// `--backend` 的取值.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum BackendArg {
+    /// 能用 Metal 就用 Metal, 否则回落 CPU.
+    Auto,
+    /// 只用 CPU.
+    Cpu,
+    /// 只用 Metal, 不可用时明确报错.
+    Metal,
+}
+
+impl From<BackendArg> for search::Backend {
+    fn from(value: BackendArg) -> Self {
+        match value {
+            BackendArg::Auto => search::Backend::Auto,
+            BackendArg::Cpu => search::Backend::Cpu,
+            BackendArg::Metal => search::Backend::Metal,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -275,6 +300,7 @@ fn main() -> ExitCode {
                     end: args.end,
                     threads: args.threads,
                     sample_count: args.samples,
+                    backend: args.backend.into(),
                 },
                 interactive,
             ),

@@ -14,7 +14,7 @@ use tracing::{debug, info};
 use crate::config::{Auth, Config};
 use crate::crypto::MAX_MESSAGE;
 use crate::discover;
-use crate::search::{run, Sample, SearchSpec};
+use crate::search::{run, Backend, Sample, SearchSpec};
 
 /// 搜索参数.
 pub struct SeedOptions {
@@ -32,6 +32,8 @@ pub struct SeedOptions {
     pub threads: Option<usize>,
     /// 用于判定的样本数量.
     pub sample_count: usize,
+    /// 计算后端.
+    pub backend: Backend,
 }
 
 /// 执行 seed 搜索.
@@ -108,13 +110,13 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
     };
 
     let started = Instant::now();
-    let hit = run(&spec, &bar);
+    let hit = run(&spec, &bar, options.backend)?;
     bar.finish_and_clear();
     let elapsed = started.elapsed();
 
     let Some(hit) = hit else {
         bail!(
-            "在 {start} .. {end} 范围内没有找到 {wxid} 的 seed, 用时 {:.1} 秒",
+            "在 {start} .. {end} 范围内没有找到 {wxid} 的 seed, 用时 {:.3} 秒",
             elapsed.as_secs_f64()
         );
     };
