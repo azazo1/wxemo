@@ -55,6 +55,7 @@ just dist
 seed 搜索的后端实现在 `src/emoticon/search/`: `scalar.rs` 是标量多核路径,
 `simd/` 下按架构分成 `x86.rs` (AVX2, 8 路) 与 `aarch64.rs` (NEON, 4 路).
 加密方案与反汇编证据见 [分析文档](docs/crypto-analysis.md).
+CUDA 后端是可选编译的, 见下节.
 
 `.cargo/config.toml` 为 aarch64 打开 `aes` crate 的 ARMv8 密码学扩展后端.
 该 crate 在 x86_64 上默认会做运行期 AES-NI 检测, 在 aarch64 上却需要显式开启,
@@ -75,6 +76,23 @@ plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 
 候选消息不超过 55 字节, 填充后正好是一个 MD5 块, 因此 `simd` 后端可以一次算多路:
 x86_64 用 AVX2 一次算 8 路, aarch64 用 NEON 一次算 4 路. AES 仍按路单独解密首块,
 第一个样本不匹配的路立即淘汰. 两种后端的判定条件完全一致, 命中结果也一致.
+
+## 搜索后端
+
+`seed search` 默认是 `--backend auto`: 有可用的 NVIDIA 设备就走 CUDA,
+否则回落 CPU 并记一条 `info` 日志. 也可以显式写 `--backend cpu` 或 `--backend cuda`,
+显式指定 `cuda` 而环境不可用时直接报错, 不会静默改用 CPU.
+
+CUDA 后端把 MD5 和 AES-128 都实现在 GPU 内核里, 一个线程试一个候选 seed,
+命中后再回到 CPU 用同一套判定逻辑复核. 它是可选编译的:
+
+```shell
+just build-cuda
+just test-cuda
+```
+
+默认的 `cargo build` 不带 `cuda` feature, 完全不受影响, macOS 上不需要 CUDA 工具链.
+构建方式, 支持的环境和实测数据见 [使用说明](docs/reproduction.md#cuda-后端).
 
 ## 免责声明
 

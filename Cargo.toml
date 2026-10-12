@@ -10,6 +10,11 @@ license = "MIT"
 name = "wxemo"
 path = "src/main.rs"
 
+[features]
+# CUDA 后端. 打开后构建脚本会用 nvcc 把 kernel.cu 编成 cubin 并嵌进二进制.
+# 不打开时整个后端不参与编译, 默认构建在 macOS 上完全不受影响.
+cuda = []
+
 [dependencies]
 aes = "0.8"
 anyhow = "1"

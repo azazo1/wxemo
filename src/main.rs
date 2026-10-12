@@ -187,7 +187,8 @@ struct SeedArgs {
     #[arg(long, default_value_t = 3)]
     samples: usize,
 
-    /// 搜索后端: auto 按本机能力选择, cpu 只用标量多核, simd 要求 SIMD 多路.
+    /// 搜索后端: auto 按本机能力选择 (CUDA 优先, 其次 SIMD, 最后标量),
+    /// cpu 只用标量多核, simd 要求 SIMD 多路, cuda 强制走 GPU (不可用时直接报错).
     #[arg(long, default_value_t = search::Backend::Auto)]
     backend: search::Backend,
 }

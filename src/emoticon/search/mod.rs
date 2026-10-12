@@ -8,16 +8,20 @@
 //!
 //! 填充情况会记录在日志与结果里, 作为诊断信息而不是判定依据.
 //!
-//! 两种后端的判定条件完全一致, 区别只在并行粒度:
+//! 各后端的判定条件完全一致, 区别只在并行粒度:
 //!
 //! - `scalar`: 每个候选独立做标量 MD5 与 AES, 由 rayon 在多个核心上并行.
 //! - `simd`: 一批候选共用一次向量化 MD5, 每路各自做 AES 首块判定.
+//! - `cuda`: GPU 只筛选候选, 命中后回到 `confirm` 复核 (需要 `cuda` feature).
 //!
-//! 选路由 [`Backend::resolve`] 决定, 显式指定 `simd` 而本机不支持时直接报错,
+//! 选路由 [`Backend::resolve`] 决定, 显式指定某个后端而本机不支持时直接报错,
 //! 不会静默退回标量路径.
 
-mod scalar;
+pub(crate) mod scalar;
 mod simd;
+
+#[cfg(feature = "cuda")]
+pub(crate) mod cuda;
 
 #[cfg(test)]
 pub(crate) mod testing;
@@ -27,7 +31,12 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use indicatif::ProgressBar;
-use tracing::info;
+use tracing::{info, warn};
+
+use crate::crypto::{
+    decrypt_all, decrypt_first_block, derive_key, match_magic, new_cipher, valid_padding,
+    MAX_MESSAGE,
+};
 
 /// 判定接受的最小魔数长度. 2 字节的魔数太弱, 不作为依据.
 pub(crate) const MIN_STRENGTH: usize = 3;
@@ -71,16 +80,18 @@ pub struct Hit {
     pub padding_ok: bool,
 }
 
-/// 用户选择的搜索后端.
+/// 用户在命令行上请求的后端.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Backend {
-    /// 本机支持 SIMD 就用 SIMD, 否则用标量.
+    /// 按本机能力自动选择: CUDA 优先, 其次 SIMD, 最后标量.
     #[default]
     Auto,
     /// 标量路径, 只靠多核并行.
     Cpu,
     /// 多路向量化路径.
     Simd,
+    /// CUDA 后端, 不可用时明确报错.
+    Cuda,
 }
 
 impl FromStr for Backend {
@@ -91,7 +102,10 @@ impl FromStr for Backend {
             "auto" => Ok(Backend::Auto),
             "cpu" => Ok(Backend::Cpu),
             "simd" => Ok(Backend::Simd),
-            other => Err(format!("未知后端 {other}, 可选 auto / cpu / simd")),
+            "cuda" => Ok(Backend::Cuda),
+            other => Err(format!(
+                "未知后端 {other}, 可选 auto / cpu / simd / cuda"
+            )),
         }
     }
 }
@@ -102,6 +116,7 @@ impl fmt::Display for Backend {
             Backend::Auto => "auto",
             Backend::Cpu => "cpu",
             Backend::Simd => "simd",
+            Backend::Cuda => "cuda",
         };
         formatter.write_str(name)
     }
@@ -110,21 +125,54 @@ impl fmt::Display for Backend {
 impl Backend {
     /// 结合本机能力确定实际使用的后端.
     ///
-    /// `auto` 会按能力自动选择, 显式指定 `simd` 而能力不足时返回错误,
-    /// 避免用户以为在用 SIMD 而实际跑的是标量.
+    /// `auto` 按能力自动选择; 显式指定某个后端而能力不足时返回错误,
+    /// 避免用户以为在用加速后端而实际跑的是标量.
     pub fn resolve(self) -> Result<Resolved> {
-        let capable = simd::available();
         match self {
             Backend::Cpu => Ok(Resolved::Cpu),
-            Backend::Simd if capable => Ok(Resolved::Simd),
+            Backend::Simd if simd::available() => Ok(Resolved::Simd),
             Backend::Simd => bail!(
                 "本机不支持 simd 后端, 需要 {}; 可改用 --backend cpu",
                 simd::REQUIREMENT
             ),
-            Backend::Auto if capable => Ok(Resolved::Simd),
-            Backend::Auto => Ok(Resolved::Cpu),
+            Backend::Cuda => match cuda_available() {
+                Ok(()) => Ok(Resolved::Cuda),
+                Err(reason) => bail!("指定了 --backend cuda 但 CUDA 不可用: {reason:#}"),
+            },
+            Backend::Auto => match cuda_available() {
+                Ok(()) => {
+                    info!("检测到可用 CUDA 设备, 使用 cuda 后端");
+                    Ok(Resolved::Cuda)
+                }
+                Err(reason) => {
+                    if simd::available() {
+                        info!("CUDA 不可用, 使用 simd 后端");
+                        return Ok(Resolved::Simd);
+                    }
+                    warn!(reason = %format!("{reason:#}"), "加速后端不可用, 回落到 cpu 后端");
+                    Ok(Resolved::Cpu)
+                }
+            },
         }
     }
+}
+
+/// 检查 CUDA 是否可用.
+#[cfg(feature = "cuda")]
+fn cuda_available() -> Result<()> {
+    cuda::probe().map(|info| {
+        info!(
+            device = %info.name,
+            compute_capability = %format!("{}.{}", info.major, info.minor),
+            "CUDA 设备就绪"
+        );
+    })
+}
+
+/// 检查 CUDA 是否可用.
+#[cfg(not(feature = "cuda"))]
+fn cuda_available() -> Result<()> {
+    bail!("本二进制编译时没有开启 cuda feature, 请用 `cargo build --features cuda` 重新编译")
 }
 
 /// 实际执行搜索的后端.
@@ -134,6 +182,8 @@ pub enum Resolved {
     Cpu,
     /// SIMD 多路.
     Simd,
+    /// CUDA.
+    Cuda,
 }
 
 impl fmt::Display for Resolved {
@@ -141,28 +191,105 @@ impl fmt::Display for Resolved {
         let name = match self {
             Resolved::Cpu => "cpu",
             Resolved::Simd => "simd",
+            Resolved::Cuda => "cuda",
         };
         formatter.write_str(name)
     }
 }
 
 impl Resolved {
-    /// 该后端一次并行处理的候选数. 标量路径为 1.
+    /// 该后端一次并行处理的候选数. 非向量化后端为 1.
     pub fn lanes(self) -> usize {
         match self {
             Resolved::Cpu => 1,
             Resolved::Simd => simd::LANES,
+            Resolved::Cuda => 1,
         }
     }
 }
 
-/// 在 `spec` 指定的范围内并行搜索, 找到即返回.
-pub fn run(spec: &SearchSpec, bar: &ProgressBar, backend: Resolved) -> Option<Hit> {
+/// 按已解析的后端执行搜索, 找到即返回.
+pub fn run(spec: &SearchSpec, bar: &ProgressBar, backend: Resolved) -> Result<Option<Hit>> {
     info!(backend = %backend, lanes = backend.lanes(), "搜索后端");
     match backend {
-        Resolved::Cpu => scalar::run(spec, bar),
-        Resolved::Simd => simd::run(spec, bar),
+        Resolved::Cpu => Ok(scalar::run(spec, bar)),
+        Resolved::Simd => Ok(simd::run(spec, bar)),
+        #[cfg(feature = "cuda")]
+        Resolved::Cuda => cuda::run(spec, bar),
+        #[cfg(not(feature = "cuda"))]
+        Resolved::Cuda => bail!("本二进制编译时没有开启 cuda feature"),
     }
+}
+
+/// 首块魔数是否达到判定强度.
+///
+/// GPU 后端用它在内核侧做粗筛, 这里保留给内核与复核共用同一套阈值.
+#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+pub(crate) fn strong_magic(block: &[u8; 16]) -> bool {
+    match_magic(block).is_some_and(|(_, len)| len >= MIN_STRENGTH)
+}
+
+/// 复核一个候选: 全部样本首块都命中魔数才算命中, 命中后整文件解密确认填充情况.
+///
+/// GPU 内核只负责把候选筛出来, 真正的判定与 `Hit` 的构造都回到这里,
+/// 保证各后端的判定语义完全一致.
+#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+pub(crate) fn confirm(spec: &SearchSpec, seed: u64, wxid_index: usize) -> Option<Hit> {
+    let wxid = spec.wxids.get(wxid_index)?;
+    let mut message = [0u8; MAX_MESSAGE];
+    let key = derive_key(seed, wxid, &mut message);
+    verify_hit(seed, wxid, &key, spec)
+}
+
+/// 用给定密钥复核一个候选, 命中则构造 `Hit`.
+#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+pub(crate) fn verify_hit(
+    seed: u64,
+    wxid: &[u8],
+    key: &[u8; 16],
+    spec: &SearchSpec,
+) -> Option<Hit> {
+    let cipher = new_cipher(key);
+
+    let mut best: Option<(&'static str, usize)> = None;
+    let mut matched = Vec::new();
+    for sample in &spec.samples {
+        let plain = decrypt_first_block(&cipher, key, &sample.prefix);
+        match match_magic(&plain) {
+            Some((name, len)) if len >= MIN_STRENGTH => {
+                if best.is_none_or(|(_, best_len)| len > best_len) {
+                    best = Some((name, len));
+                }
+                matched.push(format!("{}:{}", sample.name, name));
+            }
+            _ => return None,
+        }
+    }
+    let (format, _) = best?;
+
+    // 命中后整文件复核一次, 顺便记录填充情况.
+    let padding_ok = spec.samples.iter().all(|sample| {
+        let mut plain = vec![0u8; sample.body.len()];
+        decrypt_all(&cipher, key, &sample.body, &mut plain);
+        valid_padding(&plain)
+    });
+
+    info!(
+        seed,
+        wxid = %String::from_utf8_lossy(wxid),
+        format,
+        padding_ok,
+        matched = ?matched,
+        "命中候选"
+    );
+    Some(Hit {
+        seed,
+        wxid: wxid.to_vec(),
+        key: *key,
+        format: format.to_string(),
+        matched,
+        padding_ok,
+    })
 }
 
 #[cfg(test)]
@@ -282,17 +409,37 @@ mod tests {
         assert_eq!("auto".parse::<Backend>().unwrap(), Backend::Auto);
         assert_eq!("cpu".parse::<Backend>().unwrap(), Backend::Cpu);
         assert_eq!("simd".parse::<Backend>().unwrap(), Backend::Simd);
+        assert_eq!("cuda".parse::<Backend>().unwrap(), Backend::Cuda);
         assert!("gpu".parse::<Backend>().is_err());
+        assert_eq!(Backend::default(), Backend::Auto);
+        assert_eq!(Backend::Cuda.to_string(), "cuda");
+        assert_eq!(Resolved::Cpu.to_string(), "cpu");
 
         assert_eq!(Backend::Cpu.resolve().unwrap(), Resolved::Cpu);
-        let auto = Backend::Auto.resolve().unwrap();
+
         if simd::available() {
-            assert_eq!(auto, Resolved::Simd);
             assert_eq!(Backend::Simd.resolve().unwrap(), Resolved::Simd);
         } else {
-            assert_eq!(auto, Resolved::Cpu);
             // 显式要求 simd 时不能静默回落, 必须报错.
             assert!(Backend::Simd.resolve().is_err());
         }
+    }
+
+    /// 没有 cuda feature 时, 显式指定 cuda 必须报错而不是静默回落.
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn explicit_cuda_without_feature_errors() {
+        let error = Backend::Cuda.resolve().unwrap_err().to_string();
+        assert!(error.contains("cuda feature"), "{error}");
+    }
+
+    /// 没有 cuda feature 时 auto 必须仍然可用.
+    #[cfg(not(feature = "cuda"))]
+    #[test]
+    fn auto_works_without_cuda_feature() {
+        assert!(matches!(
+            Backend::Auto.resolve().unwrap(),
+            Resolved::Cpu | Resolved::Simd
+        ));
     }
 }

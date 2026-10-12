@@ -62,11 +62,12 @@ macOS 专属处理位于 `src/platform/macos/`.
 
 ```shell
 wxemo seed search --account wxid_example123456
+wxemo seed search --backend cuda --start 0 --end 4294967296
 ```
 
 默认从持久化目录选取 3 个样本, 穷举 `0..4294967296`.
 候选必须让所有样本首块命中已知格式, 命中后检查整文件填充并保存密钥.
-可用 `--start`, `--end`, `--threads`, `--samples` 控制搜索范围和并行度.
+可用 `--start`, `--end`, `--threads`, `--samples`, `--backend` 控制范围和执行方式.
 非交互运行时建议加全局参数 `--no-interactive`.
 
 ### 搜索后端
@@ -94,6 +95,70 @@ x86_64 走 AVX2 一次 8 路, aarch64 走 NEON 一次 4 路. AES 不做向量化
 搜索可能持续数分钟, 进度条和阶段日志用于观察是否仍在推进.
 seed 的来源在二进制接口中是 64 位整数, `0..2^32` 是默认搜索范围,
 不是对所有微信版本取值范围的保证.
+
+## CUDA 后端
+
+`--backend` 有三个取值:
+
+| 取值 | 行为 |
+| --- | --- |
+| `auto` | 默认. 能初始化 CUDA 就用 GPU, 否则回落 CPU, 并用 `info` 日志说明 |
+| `cpu` | 只用 CPU 多核 |
+| `cuda` | 只用 GPU. 设备或驱动不可用时直接报错, 不静默回落 |
+
+CUDA 路径不是默认编译进来的, 需要显式打开 feature:
+
+```shell
+just build-cuda
+just test-cuda
+```
+
+也可以直接用 Cargo: `cargo build --release --locked --features cuda`.
+不带 feature 时 `src/emoticon/search/cuda/` 整个模块不参与编译,
+默认构建在 macOS 上完全不受影响.
+
+### 内核做的事
+
+一个 GPU 线程负责一个候选 seed:
+
+1. 拼出 `"<seed 十进制>" + wxid + "EMOTICON"`, 补成单个 64 字节 MD5 块.
+2. 在核内做单块 MD5, 摘要前 16 字节就是候选密钥.
+3. 用该密钥做完整 AES-128 密钥扩展, 解出每个样本的密文首块,
+   再与密钥本身异或 (CBC 的 IV 就是密钥).
+4. 首块开头命中 PNG / GIF / JPEG / WebP / wxgf 魔数才算候选, 第一个样本不命中就丢弃.
+
+wxid, 样本首块和 S 盒放在 `__constant__`, 内核启动时把 S 盒搬进共享内存.
+MD5 的循环左移用 `__funnelshift_l` 走单条 SHF 指令.
+命中候选只写回 seed, 判定与构造再回到 CPU 的同一段代码, 两个后端语义一致.
+
+搜索按 2^22 个候选一批提交, 每批同步一次以推进进度条, 也提供提前退出的粒度.
+
+### 构建要求
+
+| 环境 | 做法 |
+| --- | --- |
+| Windows 原生 | 直接调用 CUDA Toolkit 的 `nvcc.exe`, 需要 MSVC 的 `cl.exe` |
+| WSL | 本机没有 nvcc, 通过 WSL interop 调用 Windows 侧的 `cmd.exe`, 在批处理脚本里加载 `vcvars64.bat` 后调用 Windows 的 `nvcc.exe` |
+| macOS / 其他 | 不支持, 构建时明确报错而不是静默跳过 |
+
+产物是 cubin 而不是 PTX: CUDA 13.4 产出的 PTX 是 9.4 版本, 高于当前驱动
+(CUDA 13.0) 支持的版本, 加载时会返回 `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`.
+cubin 已经是落到 SASS 的镜像, 由驱动直接加载.
+
+运行期只依赖 CUDA 驱动 (`nvcuda.dll` 或 `libcuda.so`), 不需要 nvrtc.
+WSL 只提供 `/usr/lib/wsl/lib/libcuda.so`, 也能直接用.
+
+可用环境变量覆盖构建时的探测结果:
+
+- `WXEMO_CUDA_NVCC`: `nvcc` 可执行文件路径.
+- `WXEMO_CUDA_VCVARS`: `vcvars64.bat` 路径.
+- `WXEMO_CUDA_ARCH`: 目标架构, 默认 `sm_89` (Ada).
+
+### 性能特征
+
+GPU 的固定启动开销是几十到两百毫秒 (建上下文, 载入镜像), 与扫描范围无关.
+因此小范围扫描会被这段开销主导, 范围越大越能体现吞吐差距.
+默认的 `0..2^32` 范围下这段开销可以忽略.
 
 ## 管理 seed 记录
 
@@ -211,6 +276,7 @@ wxemo decode out/emoticons --out out/images --decoder-lib <可信的原生媒体
 ```shell
 just test
 just lint
+just test-cuda
 ```
 
 测试覆盖已知种子的搜索, CBC 解密, 截断输入保留,
@@ -218,6 +284,11 @@ just lint
 WXGF 测试覆盖头部版本, PNG/APNG 完整帧数与 CRC, 空数据分块,
 原生工作进程失败后的继续处理, 超时, 输出防覆盖和路径越界.
 合成媒体库及透明 APNG 用于可移植测试, 不依赖 CI 安装微信或持有私人样本.
+
+`just test-cuda` 会真的启动 GPU 内核, 因此只在带 NVIDIA 卡的机器上跑.
+它用合成样本让 CUDA 后端在一个窄范围里搜已知 seed, 并断言派生出的密钥
+与 CPU 路径逐字节一致; 另外验证范围不含该 seed 时报告未命中.
+默认的 `just test` 不碰 GPU, 在没有 CUDA 的机器上照常通过.
 
 本机 macOS arm64 的额外验证处理了 263 个真实 WXGF 文件:
 181 个静态图片, 82 个动画, 合计 3195 帧均可由独立图片解码器读取.
