@@ -14,6 +14,7 @@
 //! - `simd`: 一批候选共用一次向量化 MD5, 每路各自做 AES 首块判定.
 //! - `cuda`: GPU 只筛选候选, 命中后回到 `confirm` 复核 (需要 `cuda` feature).
 //! - `metal`: macOS 原生 Metal compute, 同样只筛选, 复核走 `confirm`.
+//! - `gpu`: wgpu 跨平台 GPU 后端, 一套 WGSL 覆盖 Metal / Vulkan / DX12.
 //!
 //! 选路由 [`Backend::resolve`] 决定, 显式指定某个后端而本机不支持时直接报错,
 //! 不会静默退回标量路径.
@@ -23,6 +24,8 @@ mod simd;
 
 #[cfg(feature = "cuda")]
 pub(crate) mod cuda;
+
+pub(crate) mod gpu;
 
 #[cfg(target_os = "macos")]
 pub(crate) mod metal;
@@ -98,6 +101,8 @@ pub enum Backend {
     Cuda,
     /// macOS Metal 后端, 不可用时明确报错.
     Metal,
+    /// wgpu 跨平台 GPU 后端, 不可用时明确报错.
+    Wgpu,
 }
 
 impl FromStr for Backend {
@@ -110,8 +115,9 @@ impl FromStr for Backend {
             "simd" => Ok(Backend::Simd),
             "cuda" => Ok(Backend::Cuda),
             "metal" => Ok(Backend::Metal),
+            "wgpu" => Ok(Backend::Wgpu),
             other => Err(format!(
-                "未知后端 {other}, 可选 auto / cpu / simd / cuda / metal"
+                "未知后端 {other}, 可选 auto / cpu / simd / cuda / metal / wgpu"
             )),
         }
     }
@@ -125,6 +131,7 @@ impl fmt::Display for Backend {
             Backend::Simd => "simd",
             Backend::Cuda => "cuda",
             Backend::Metal => "metal",
+            Backend::Wgpu => "wgpu",
         };
         formatter.write_str(name)
     }
@@ -151,8 +158,13 @@ impl Backend {
                 Some(()) => Ok(Resolved::Metal),
                 None => bail!("指定了 --backend metal 但本机没有可用的 Metal 设备"),
             },
+            Backend::Wgpu => match gpu_available() {
+                Some(()) => Ok(Resolved::Wgpu),
+                None => bail!("指定了 --backend wgpu 但本机没有可用的 GPU adapter"),
+            },
             Backend::Auto => {
-                // GPU 优先: CUDA 的算力上限最高, 其次是原生 Metal, 再退向量化与标量.
+                // GPU 优先: CUDA 的算力上限最高, 其次是原生 Metal,
+                // 再退跨平台的 wgpu, 最后才是 CPU 路径.
                 if cuda_available().is_ok() {
                     info!("检测到可用 CUDA 设备, 使用 cuda 后端");
                     return Ok(Resolved::Cuda);
@@ -160,6 +172,10 @@ impl Backend {
                 if metal_available().is_some() {
                     info!("使用 metal 后端");
                     return Ok(Resolved::Metal);
+                }
+                if gpu_available().is_some() {
+                    info!("使用 wgpu 后端");
+                    return Ok(Resolved::Wgpu);
                 }
                 if simd::available() {
                     info!("使用 simd 后端");
@@ -170,6 +186,11 @@ impl Backend {
             }
         }
     }
+}
+
+/// 探测 wgpu adapter.
+fn gpu_available() -> Option<()> {
+    gpu::available().then_some(())
 }
 
 /// 探测 Metal 设备.
@@ -215,6 +236,8 @@ pub enum Resolved {
     Cuda,
     /// macOS Metal.
     Metal,
+    /// wgpu 跨平台 GPU.
+    Wgpu,
 }
 
 impl fmt::Display for Resolved {
@@ -224,6 +247,7 @@ impl fmt::Display for Resolved {
             Resolved::Simd => "simd",
             Resolved::Cuda => "cuda",
             Resolved::Metal => "metal",
+            Resolved::Wgpu => "wgpu",
         };
         formatter.write_str(name)
     }
@@ -237,6 +261,7 @@ impl Resolved {
             Resolved::Simd => simd::LANES,
             Resolved::Cuda => 1,
             Resolved::Metal => 1,
+            Resolved::Wgpu => 1,
         }
     }
 }
@@ -255,6 +280,7 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar, backend: Resolved) -> Result<Op
         Resolved::Metal => metal::run(spec, bar),
         #[cfg(not(target_os = "macos"))]
         Resolved::Metal => bail!("metal 后端只在 macOS 上可用"),
+        Resolved::Wgpu => gpu::run(spec, bar),
     }
 }
 
@@ -270,7 +296,6 @@ pub(crate) fn strong_magic(block: &[u8; 16]) -> bool {
 ///
 /// GPU 内核只负责把候选筛出来, 真正的判定与 `Hit` 的构造都回到这里,
 /// 保证各后端的判定语义完全一致.
-#[cfg_attr(not(any(feature = "cuda", target_os = "macos")), allow(dead_code))]
 pub(crate) fn confirm(spec: &SearchSpec, seed: u64, wxid_index: usize) -> Option<Hit> {
     let wxid = spec.wxids.get(wxid_index)?;
     let mut message = [0u8; MAX_MESSAGE];
@@ -279,7 +304,6 @@ pub(crate) fn confirm(spec: &SearchSpec, seed: u64, wxid_index: usize) -> Option
 }
 
 /// 用给定密钥复核一个候选, 命中则构造 `Hit`.
-#[cfg_attr(not(any(feature = "cuda", target_os = "macos")), allow(dead_code))]
 pub(crate) fn verify_hit(seed: u64, wxid: &[u8], key: &[u8; 16], spec: &SearchSpec) -> Option<Hit> {
     let cipher = new_cipher(key);
 
@@ -442,9 +466,12 @@ mod tests {
         assert_eq!("cpu".parse::<Backend>().unwrap(), Backend::Cpu);
         assert_eq!("simd".parse::<Backend>().unwrap(), Backend::Simd);
         assert_eq!("cuda".parse::<Backend>().unwrap(), Backend::Cuda);
-        assert!("gpu".parse::<Backend>().is_err());
+        assert_eq!("metal".parse::<Backend>().unwrap(), Backend::Metal);
+        assert_eq!("wgpu".parse::<Backend>().unwrap(), Backend::Wgpu);
+        assert!("vulkan".parse::<Backend>().is_err());
         assert_eq!(Backend::default(), Backend::Auto);
         assert_eq!(Backend::Cuda.to_string(), "cuda");
+        assert_eq!(Backend::Wgpu.to_string(), "wgpu");
         assert_eq!(Resolved::Cpu.to_string(), "cpu");
 
         assert_eq!(Backend::Cpu.resolve().unwrap(), Resolved::Cpu);
@@ -471,7 +498,7 @@ mod tests {
     fn auto_works_without_cuda_feature() {
         assert!(matches!(
             Backend::Auto.resolve().unwrap(),
-            Resolved::Cpu | Resolved::Simd | Resolved::Metal
+            Resolved::Cpu | Resolved::Simd | Resolved::Metal | Resolved::Wgpu
         ));
     }
 }

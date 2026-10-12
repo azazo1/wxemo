@@ -107,6 +107,17 @@ MSL 源码内嵌在二进制里, 在运行期由驱动自带的编译器编译,
 不需要安装 Xcode 的 Metal Toolchain 组件.
 两个后端的命中判定条件与命中后的整文件复核完全共用, 只可能在速度上有差别.
 
+判定可以跑在多核 CPU 上, 也可以跑在 GPU 上:
+
+```shell
+wxemo seed search --backend auto   # 默认, 能用 GPU 就用, 否则回落 CPU
+wxemo seed search --backend cpu    # 只用多核 CPU
+wxemo seed search --backend wgpu   # 只用 GPU, 不可用时直接报错
+```
+
+GPU 后端是一份 WGSL 计算着色器, 在着色器里做单块 MD5 和 AES-128 解密,
+一套内核覆盖 Metal / Vulkan / DX12. 详细说明见 [使用说明](docs/reproduction.md).
+
 ## 免责声明
 
 仅用于学习和自查自己的本地微信数据. 不联网上传数据, 不修改微信数据库.
