@@ -30,7 +30,10 @@ pub fn init(data_root: Option<String>, force: bool, interactive: bool) -> Result
                 roots[0].clone()
             } else {
                 if !interactive {
-                    anyhow::bail!("系统默认位置找到 {} 个有效数据目录, 请用 --data-root 明确指定", roots.len());
+                    anyhow::bail!(
+                        "系统默认位置找到 {} 个有效数据目录, 请用 --data-root 明确指定",
+                        roots.len()
+                    );
                 }
                 if !roots.is_empty() {
                     eprintln!("发现多个数据目录, 请选择:");
@@ -49,7 +52,10 @@ pub fn init(data_root: Option<String>, force: bool, interactive: bool) -> Result
                     discover::normalize_root(line.trim())
                 } else {
                     let choice: usize = line.trim().parse().context("无法解析选择序号")?;
-                    roots.get(choice.wrapping_sub(1)).context("目录序号超出范围")?.clone()
+                    roots
+                        .get(choice.wrapping_sub(1))
+                        .context("目录序号超出范围")?
+                        .clone()
                 }
             }
         }

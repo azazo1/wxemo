@@ -4,13 +4,17 @@ use std::io::{self, Write};
 use anyhow::{bail, Context, Result};
 use tracing::info;
 
-use crate::config::{Auth, parse_key};
+use crate::config::{parse_key, Auth};
 use crate::{crypto, discover};
 
 /// 仅规范化显式账号, 管理记录不依赖微信目录仍然存在.
 fn account_id(raw: &str) -> Result<String> {
     let raw = raw.trim();
-    if raw.is_empty() || raw.chars().any(|ch| ch.is_whitespace() || ch == '/' || ch == '\\') {
+    if raw.is_empty()
+        || raw
+            .chars()
+            .any(|ch| ch.is_whitespace() || ch == '/' || ch == '\\')
+    {
         bail!("账号标识不能为空, 也不能包含空白或路径分隔符");
     }
     let account = discover::normalize_wxid(raw);
@@ -40,7 +44,11 @@ pub fn status(account: Option<&str>) -> Result<()> {
 fn show_status(auth: &Auth, account: &str) {
     match auth.get(account) {
         Some(secret) => {
-            let state = if parse_key(&secret.key).is_ok() { "已保存" } else { "密钥格式异常" };
+            let state = if parse_key(&secret.key).is_ok() {
+                "已保存"
+            } else {
+                "密钥格式异常"
+            };
             println!("{account}: {state} (seed 和密钥已隐藏)");
         }
         None => println!("{account}: 未保存"),

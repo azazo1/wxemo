@@ -204,7 +204,9 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Config(command) => match command {
-            ConfigCommand::Init { data_root, force } => commands::config::init(data_root, force, interactive),
+            ConfigCommand::Init { data_root, force } => {
+                commands::config::init(data_root, force, interactive)
+            }
             ConfigCommand::Status => commands::config::status(),
             ConfigCommand::Path => commands::config::path(),
             ConfigCommand::SetRoot { path } => commands::config::set_root(&path),
@@ -224,8 +226,14 @@ fn main() -> ExitCode {
                 interactive,
             ),
             SeedCommand::Status { account } => commands::seed::manage::status(account.as_deref()),
-            SeedCommand::Import { seed, account, force } => commands::seed::manage::import(&account, seed, force),
-            SeedCommand::Remove { account, yes } => commands::seed::manage::remove(&account, yes, interactive),
+            SeedCommand::Import {
+                seed,
+                account,
+                force,
+            } => commands::seed::manage::import(&account, seed, force),
+            SeedCommand::Remove { account, yes } => {
+                commands::seed::manage::remove(&account, yes, interactive)
+            }
         },
         Command::Extract(args) => commands::extract::run_extract(
             ExtractOptions {
