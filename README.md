@@ -9,18 +9,23 @@
 解压后将 `wxemo` 放到 PATH. 支持 Windows, Linux 和 macOS 的 x86_64 / aarch64.
 Linux 归档使用 GNU 动态链接, 需要 glibc 2.39 或更新版本.
 
+以下示例对应当前源码, 历史 Release 的命令请以 `--help` 为准.
+
 ```shell
-wxemo config init --data-root <微信数据根目录>
 wxemo accounts
-wxemo seed
+wxemo seed search
 wxemo extract --out out/emoticons --manifest
 ```
+
+默认目录会自动发现. 使用自定义位置时, 运行
+`wxemo config init --data-root <微信数据根目录>` 保存路径.
 
 多个账号时使用 `--account <账号标识或目录名>`. 根目录可以位于 `xwechat_files` 上层,
 程序会向下查找账号. 在 WSL 中会把 `D:/wechat` 转为 `/mnt/d/wechat`.
 
 - 配置保存在 `~/.config/wxemo/`, 可用 `WXEMO_CONFIG_DIR` 指定隔离目录.
-- `seed` 子命令保存账号对应的 seed 与密钥, `extract` 自动复用.
+- `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值,
+  `seed remove` 删除记录. `extract` 自动复用保存的密钥.
 - PNG / GIF / JPEG / WebP 按格式结构拆分. 未识别片段保留为 `.bin`.
 - `.wxgf` 原样保留, 不承诺直接播放或转码. 使用 `--no-split` 可保留整个明文容器.
 - `wxemo doctor` 检查配置与账号发现情况, `--verbose` 显示诊断日志.
@@ -51,7 +56,7 @@ plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 
 ```
 
 账号标识不带目录末尾的 4 位十六进制后缀. 默认搜索范围为 `0..2^32`,
-可通过 `seed --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
+可通过 `seed search --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
 
 ## 免责声明
 

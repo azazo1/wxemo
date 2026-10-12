@@ -50,8 +50,9 @@ enum Command {
     /// 列出发现的微信账号.
     Accounts(AccountsArgs),
 
-    /// 暴力搜索账号的 seed, 并记录派生出的密钥.
-    Seed(SeedArgs),
+    /// 搜索, 查看, 导入或删除账号的 seed 记录.
+    #[command(subcommand)]
+    Seed(SeedCommand),
 
     /// 用已知密钥解密并还原表情包.
     Extract(ExtractArgs),
@@ -64,7 +65,7 @@ enum Command {
 enum ConfigCommand {
     /// 交互式初始化配置.
     Init {
-        /// 微信数据根目录, 例如 D:/wechat. 非交互环境必须提供.
+        /// 微信数据根目录, 省略时自动发现系统默认位置.
         #[arg(long)]
         data_root: Option<String>,
         /// 覆盖已存在的配置.
@@ -87,6 +88,38 @@ struct AccountsArgs {
     /// 额外/替代的数据根目录, 可重复.
     #[arg(long = "data-root")]
     data_roots: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum SeedCommand {
+    /// 暴力搜索 seed, 并保存派生出的密钥.
+    Search(SeedArgs),
+    /// 查看已保存记录的状态, 不显示 seed 或密钥.
+    Status {
+        /// 仅查看指定账号, 省略时列出全部已保存记录.
+        #[arg(long)]
+        account: Option<String>,
+    },
+    /// 导入已知 seed 并派生密钥, 不搜索也不验证微信密文.
+    Import {
+        /// 已知的十进制 seed.
+        seed: u64,
+        /// 账号标识 (wxid) 或账号目录名.
+        #[arg(long)]
+        account: String,
+        /// 覆盖该账号已有的记录.
+        #[arg(long)]
+        force: bool,
+    },
+    /// 删除本工具保存的 seed 与密钥, 不修改微信数据.
+    Remove {
+        /// 要删除记录的账号标识或目录名.
+        #[arg(long)]
+        account: String,
+        /// 跳过确认, 非交互运行必须提供.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -171,24 +204,29 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Command::Config(command) => match command {
-            ConfigCommand::Init { data_root, force } => commands::config::init(data_root, force),
+            ConfigCommand::Init { data_root, force } => commands::config::init(data_root, force, interactive),
             ConfigCommand::Status => commands::config::status(),
             ConfigCommand::Path => commands::config::path(),
             ConfigCommand::SetRoot { path } => commands::config::set_root(&path),
         },
         Command::Accounts(args) => commands::accounts::run(&args.data_roots),
-        Command::Seed(args) => commands::seed::run_seed(
-            SeedOptions {
-                account: args.account,
-                emoticon_dir: args.emoticon_dir,
-                data_roots: args.data_roots,
-                start: args.start,
-                end: args.end,
-                threads: args.threads,
-                sample_count: args.samples,
-            },
-            interactive,
-        ),
+        Command::Seed(command) => match command {
+            SeedCommand::Search(args) => commands::seed::run_seed(
+                SeedOptions {
+                    account: args.account,
+                    emoticon_dir: args.emoticon_dir,
+                    data_roots: args.data_roots,
+                    start: args.start,
+                    end: args.end,
+                    threads: args.threads,
+                    sample_count: args.samples,
+                },
+                interactive,
+            ),
+            SeedCommand::Status { account } => commands::seed::manage::status(account.as_deref()),
+            SeedCommand::Import { seed, account, force } => commands::seed::manage::import(&account, seed, force),
+            SeedCommand::Remove { account, yes } => commands::seed::manage::remove(&account, yes, interactive),
+        },
         Command::Extract(args) => commands::extract::run_extract(
             ExtractOptions {
                 account: args.account,

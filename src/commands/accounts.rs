@@ -8,18 +8,11 @@ use crate::discover;
 /// 列出数据根目录下发现的所有账号.
 pub fn run(roots: &[String]) -> Result<()> {
     let config = Config::load()?.0;
-    let resolved: Vec<std::path::PathBuf> = if roots.is_empty() {
-        config.data_roots.clone()
-    } else {
-        roots
-            .iter()
-            .map(|raw| discover::normalize_root(raw))
-            .collect()
-    };
+    let resolved = discover::defaults::resolve(roots, &config.data_roots)?;
 
     if resolved.is_empty() {
-        println!("尚未配置数据根目录, 先运行 `wxemo config init`");
-        println!("或直接指定: wxemo accounts --data-root D:/wechat");
+        println!("未在配置或系统默认位置找到支持的表情数据, 请用 --data-root 指定路径");
+        println!("也可运行 `wxemo config init --data-root <目录>` 保存路径");
         return Ok(());
     }
 

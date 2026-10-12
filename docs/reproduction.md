@@ -5,10 +5,36 @@
 预编译 CLI 不需要 Python. 从源码开发时可用 `just run <参数>` 运行相同子命令.
 
 ```shell
-wxemo config init --data-root <微信数据根目录>
 wxemo accounts
+wxemo config init
 wxemo doctor
 ```
+
+未指定路径且未配置数据根目录时, 自动探测系统默认候选:
+
+| 平台 | 候选位置 |
+| --- | --- |
+| macOS | `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files` |
+| Windows | 系统 Documents 位置下的 `xwechat_files`, 同时考虑 OneDrive 和 Tencent 嵌套目录 |
+| Linux | XDG 文档目录或 `~/Documents/xwechat_files`, `~/xwechat_files`, XDG 的 wechat 沙箱目录 |
+
+Windows 使用 Known Folder API 支持 Documents 重定向.
+Linux 优先读 `XDG_DOCUMENTS_DIR`, 再解析 `user-dirs.dirs`, 不执行其中的 shell 内容.
+只采用包含 `<账号>/business/emoticon` 的有效位置, 不扫描整个磁盘.
+`accounts`, `seed search`, `extract`, `doctor` 可在未初始化配置时使用发现结果.
+`config init` 找到一个有效位置会自动保存, 多个位置时需选择或用 `--data-root` 指定.
+多账号仍需交互选择或显式指定 `--account`.
+
+优先级为显式 `--data-root` > 已保存配置 > 系统默认候选.
+指定过自定义路径时不会被默认位置覆盖. 找不到时使用
+`wxemo config init --data-root <目录>` 手动设置.
+旧版微信的目录布局和 macOS / Linux 的实际加密兼容性尚未用真实样本验证,
+目录发现成功不代表解密一定成功.
+
+候选依据: [腾讯 Lemon 的 macOS 路径](https://github.com/Tencent/lemon-cleaner/blob/7ff8676f1dbe624b039f6b5d50ca81b50963629e/localPod/LemonFileMove/LemonFileMove/Classes/Scan/LMWeChatScan.m),
+[Windows 路径参考](https://github.com/sgaofen/murmur/blob/31646a003a0921217f90f947e2bc33f0de7bdbed/docs/ONBOARDING_WINDOWS.md),
+[Linux 原生存储示例](https://github.com/RICwang/docker-wechat/blob/49cc62e441dba7ad07dd6f7aa000b1ae35a73ffe/README.md)
+与 [Gentoo 沙箱布局](https://github.com/gentoo-zh/overlay/blob/82b3fce9745dc1095b0585cd29d2820a1d67ba99/net-im/wechat/files/bwrap.sh).
 
 数据目录的典型布局为 `xwechat_files/<账号>/business/emoticon`.
 `--data-root` 可以指向 `xwechat_files` 或其上层, 程序向下查找最多 5 层.
@@ -22,7 +48,7 @@ wxemo doctor
 ## 搜索 seed
 
 ```shell
-wxemo seed --account wxid_example123456
+wxemo seed search --account wxid_example123456
 ```
 
 默认从持久化目录选取 3 个样本, 穷举 `0..4294967296`.
@@ -33,6 +59,23 @@ wxemo seed --account wxid_example123456
 搜索可能持续数分钟, 进度条和阶段日志用于观察是否仍在推进.
 seed 的来源在二进制接口中是 64 位整数, `0..2^32` 是默认搜索范围,
 不是对所有微信版本取值范围的保证.
+
+## 管理 seed 记录
+
+```shell
+wxemo seed status
+wxemo seed status --account wxid_example123456
+wxemo seed import <已知十进制seed> --account wxid_example123456
+wxemo seed remove --account wxid_example123456
+```
+
+- `status` 仅列出保存状态, 不显示 seed 或密钥. 不依赖微信数据目录存在.
+- `import` 从已知 seed 派生并保存密钥, 不搜索也不验证密文.
+  已有记录时必须加 `--force` 才能覆盖. 导入后使用 `extract` 核对解密结果.
+- `remove` 只删除本工具保存的该账号记录, 不修改微信数据.
+  交互运行会确认, 非交互运行必须显式加 `--yes`.
+- `search` 是原 `wxemo seed` 的替代入口. 直接运行 `wxemo seed` 只显示用法,
+  不会启动长时间搜索.
 
 ## 解密与输出
 

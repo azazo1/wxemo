@@ -9,6 +9,8 @@
 //! 根目录由用户配置 (例如 `D:/wechat`), 账号目录名形如
 //! `wxid_xxxxxxxx_7e1e` —— 尾部 4 位十六进制是微信加的, 不参与密钥派生.
 
+pub mod defaults;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

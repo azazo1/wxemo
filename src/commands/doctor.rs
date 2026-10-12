@@ -1,6 +1,5 @@
 //! `wxemo doctor` 环境诊断.
 use crate::{config, discover};
-use std::path::PathBuf;
 
 pub fn run(data_roots: &[String]) -> anyhow::Result<()> {
     let dir = config::config_dir();
@@ -22,14 +21,7 @@ pub fn run(data_roots: &[String]) -> anyhow::Result<()> {
             "使用默认值"
         }
     );
-    let roots: Vec<PathBuf> = if data_roots.is_empty() {
-        cfg.data_roots.clone()
-    } else {
-        data_roots
-            .iter()
-            .map(|raw| discover::normalize_root(raw))
-            .collect()
-    };
+    let roots = discover::defaults::resolve(data_roots, &cfg.data_roots)?;
     if roots.is_empty() {
         println!("数据根目录: 未配置");
     } else {
@@ -49,7 +41,7 @@ pub fn run(data_roots: &[String]) -> anyhow::Result<()> {
         let state = if auth.get(&account.wxid).is_some() {
             "已保存密钥"
         } else {
-            "缺 seed, 运行 `wxemo seed`"
+            "缺 seed, 运行 `wxemo seed search`"
         };
         println!("  {}  [{}]", account.wxid, state);
     }

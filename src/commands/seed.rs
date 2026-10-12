@@ -1,4 +1,6 @@
-//! `wxemo seed` 子命令: 暴力搜索账号的 seed.
+//! `wxemo seed search`: 暴力搜索账号的 seed.
+
+pub mod manage;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -168,15 +170,7 @@ fn resolve_target(
         return Ok((wxid, dir.clone()));
     }
 
-    let roots: Vec<PathBuf> = if options.data_roots.is_empty() {
-        config.data_roots.clone()
-    } else {
-        options
-            .data_roots
-            .iter()
-            .map(|raw| discover::normalize_root(raw))
-            .collect()
-    };
+    let roots = discover::defaults::resolve(&options.data_roots, &config.data_roots)?;
     if roots.is_empty() {
         bail!("尚未配置数据根目录, 先运行 `wxemo config init`, 或用 --data-root 指定");
     }
@@ -198,15 +192,7 @@ fn folder_name_variant(
     wxid: &str,
     interactive: bool,
 ) -> Option<String> {
-    let roots: Vec<PathBuf> = if options.data_roots.is_empty() {
-        config.data_roots.clone()
-    } else {
-        options
-            .data_roots
-            .iter()
-            .map(|raw| discover::normalize_root(raw))
-            .collect()
-    };
+    let roots = discover::defaults::resolve(&options.data_roots, &config.data_roots).ok()?;
     let accounts = discover::find_accounts(&roots).ok()?;
     let account = discover::select_account(
         &accounts,

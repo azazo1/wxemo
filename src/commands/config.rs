@@ -1,6 +1,6 @@
 //! `wxemo config` 子命令: 初始化与查看配置.
 
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 
 use anyhow::{Context, Result};
 
@@ -9,8 +9,8 @@ use crate::discover;
 
 /// `wxemo config init`.
 ///
-/// 交互式地问数据根目录, 然后写入配置. 非交互环境下必须用 `--data-root`.
-pub fn init(data_root: Option<String>, force: bool) -> Result<()> {
+/// 优先使用显式路径, 否则探测系统默认位置; 只有缺少路径或有多个候选时询问.
+pub fn init(data_root: Option<String>, force: bool, interactive: bool) -> Result<()> {
     let path = config_path();
     if path.exists() && !force {
         println!("配置已存在: {}", path.display());
@@ -18,28 +18,42 @@ pub fn init(data_root: Option<String>, force: bool) -> Result<()> {
         return Ok(());
     }
 
-    let raw = match data_root {
-        Some(value) => value,
+    let root = match data_root {
+        Some(raw) => {
+            anyhow::ensure!(!raw.trim().is_empty(), "数据根目录不能为空");
+            discover::normalize_root(&raw)
+        }
         None => {
-            if !std::io::stdin().is_terminal() {
-                anyhow::bail!(
-                    "标准输入不是终端, 请用 --data-root 指定微信数据根目录, 例如:\n  \
-                     wxemo config init --data-root D:/wechat"
-                );
+            let roots = discover::defaults::resolve(&[], &[])?;
+            if roots.len() == 1 {
+                println!("自动采用微信数据目录: {}", roots[0].display());
+                roots[0].clone()
+            } else {
+                if !interactive {
+                    anyhow::bail!("系统默认位置找到 {} 个有效数据目录, 请用 --data-root 明确指定", roots.len());
+                }
+                if !roots.is_empty() {
+                    eprintln!("发现多个数据目录, 请选择:");
+                    for (index, root) in roots.iter().enumerate() {
+                        eprintln!("  [{}] {}", index + 1, root.display());
+                    }
+                    eprint!("输入序号 (1-{}): ", roots.len());
+                } else {
+                    eprint!("未找到支持的默认目录, 输入微信数据根目录: ");
+                }
+                std::io::stderr().flush()?;
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                if roots.is_empty() {
+                    anyhow::ensure!(!line.trim().is_empty(), "数据根目录不能为空");
+                    discover::normalize_root(line.trim())
+                } else {
+                    let choice: usize = line.trim().parse().context("无法解析选择序号")?;
+                    roots.get(choice.wrapping_sub(1)).context("目录序号超出范围")?.clone()
+                }
             }
-            print!("微信数据根目录 (例如 D:/wechat 或 ~/xwechat_files): ");
-            std::io::stdout().flush()?;
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line)?;
-            line.trim().to_string()
         }
     };
-
-    if raw.is_empty() {
-        anyhow::bail!("数据根目录不能为空");
-    }
-
-    let root = discover::normalize_root(&raw);
     let config = Config {
         data_roots: vec![root.clone()],
         ..Config::default()
@@ -47,7 +61,7 @@ pub fn init(data_root: Option<String>, force: bool) -> Result<()> {
     config.save()?;
 
     println!("已写入配置: {}", path.display());
-    println!("  数据根目录: {} ({})", raw, root.display());
+    println!("  数据根目录: {}", root.display());
     if !root.exists() {
         println!("  提示: 该目录当前不存在, 请确认路径是否正确");
     }

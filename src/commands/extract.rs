@@ -201,15 +201,7 @@ fn resolve_target(
         return Ok((discover::normalize_wxid(&folder), dir.clone()));
     }
 
-    let roots: Vec<PathBuf> = if options.data_roots.is_empty() {
-        config.data_roots.clone()
-    } else {
-        options
-            .data_roots
-            .iter()
-            .map(|raw| discover::normalize_root(raw))
-            .collect()
-    };
+    let roots = discover::defaults::resolve(&options.data_roots, &config.data_roots)?;
     if roots.is_empty() {
         bail!("尚未配置数据根目录, 先运行 `wxemo config init`, 或用 --data-root 指定");
     }
@@ -236,7 +228,7 @@ fn resolve_key(options: &ExtractOptions, auth: &Auth, wxid: &str) -> Result<[u8;
     if let Some(secret) = auth.get(wxid) {
         return parse_key(&secret.key);
     }
-    bail!("没有 {wxid} 的密钥. 先运行 `wxemo seed` 求出来, 或用 --key/--seed 指定")
+    bail!("没有 {wxid} 的密钥. 先运行 `wxemo seed search`, 或用 seed import / --key / --seed 指定")
 }
 
 /// 递归收集文件, 遍历失败时明确报错, 不静默遗漏子目录.
