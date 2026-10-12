@@ -1,6 +1,6 @@
 [package]
 name = "wxemo"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 description = "微信 4.x 自定义表情包的 seed 搜索与解密工具"

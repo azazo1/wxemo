@@ -88,10 +88,14 @@ GPU 后端只做首块魔数筛选, 命中后一律回到 CPU 用与标量路径
 
 ### aarch64 的 AES 必须显式开启
 
-`.cargo/config.toml` 为 aarch64 打开 `aes` crate 的 ARMv8 密码学扩展后端.
-该 crate 在 x86_64 上默认会做运行期 AES-NI 检测, 在 aarch64 上却需要显式开启,
-不开启就会静默使用纯软件实现, 使 Apple Silicon 等平台明显偏慢 (实测约 2.5 倍).
+`.cargo/config.toml` 为 **macOS 与 Linux 的** aarch64 打开 `aes` crate 的 ARMv8
+密码学扩展后端. 该 crate 在 x86_64 上默认会做运行期 AES-NI 检测, 在 aarch64 上却需要
+显式开启, 不开启就会静默使用纯软件实现, 使 Apple Silicon 等平台明显偏慢 (实测约 2.5 倍).
 开启后仍由 `cpufeatures` 做运行期检测, 缺少该扩展的 CPU 照旧走软件路径.
+
+Windows aarch64 不在此列: 该 crate 只在 macOS 与 Linux 上对 armv8 后端做运行期检测,
+Windows 的 rustc 默认不启用 `aes` target feature, 只加 cfg 会编译失败,
+强行补 target feature 又会失去运行期检测兜底. 因此 Windows ARM 保持软件实现.
 
 ### CUDA 后端需要显式编译
 

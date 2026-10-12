@@ -114,12 +114,30 @@ mod tests {
     use super::*;
     use crate::emoticon::crypto::{derive_key, MAX_MESSAGE};
     use crate::emoticon::search::testing::three_samples;
+    use std::sync::Mutex;
+
+    /// 串行化 GPU 测试.
+    ///
+    /// `run` 每次调用都会各建一套 wgpu 设备与管线, 而 cargo test 默认并行跑用例.
+    /// 两个设备同时创建销毁, 在没有独显的机器上会直接在图形驱动里崩掉整个测试进程
+    /// (CI 的 Windows ARM runner 就是这样拿到 STATUS_ACCESS_VIOLATION 的),
+    /// 崩掉时后面用例的结果一个都打印不出来, 表现为难以定位的随机失败.
+    static GPU_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// 取到锁再往下跑; 前一个用例 panic 过也要继续, 否则后续用例会被连带毒化.
+    fn serialize() -> std::sync::MutexGuard<'static, ()> {
+        GPU_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
 
     /// 用合成样本让 GPU 后端在窄范围里真的找到已知 seed, 并断言派生出的密钥正确.
     ///
     /// 没有可用 adapter 时跳过; 有 adapter 却起不来或算错, 就必须失败.
     #[test]
     fn wgpu_finds_known_seed_and_derives_the_same_key() {
+        let _guard = serialize();
+
         let seed = 123456789u64;
         let wxid = b"wxid_benchmark123456";
         let mut message = [0u8; MAX_MESSAGE];
@@ -154,6 +172,8 @@ mod tests {
     /// 范围里不含正确 seed 时, GPU 后端必须返回未命中而不是乱报.
     #[test]
     fn wgpu_reports_nothing_for_unrelated_range() {
+        let _guard = serialize();
+
         let seed = 424242u64;
         let wxid = b"wxid_benchmark123456";
         let mut message = [0u8; MAX_MESSAGE];
