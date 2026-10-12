@@ -106,9 +106,13 @@ just build-cuda
 just test-cuda
 ```
 
-构建脚本会用 nvcc 把 `kernel.cu` 编成 cubin 再嵌进二进制, 运行期经 `libloading`
-直接调用 CUDA driver API, 因此不引入任何新的 crate 依赖. WSL 里没有 nvcc 与
-libnvrtc, 构建脚本会经 interop 调用 Windows 侧的 nvcc.
+构建脚本会用 nvcc 把 `kernel.cu` 编成一份含多个架构的 fatbin 再嵌进二进制,
+运行期经 `libloading` 直接调用 CUDA driver API, 因此不引入任何新的 crate 依赖.
+WSL 里没有 nvcc 与 libnvrtc, 构建脚本会经 interop 调用 Windows 侧的 nvcc.
+
+覆盖 `sm_75 / 80 / 86 / 89 / 90 / 120` 加一份 PTX 兜底, 即 RTX 20 到 RTX 50 以及
+A100 / H100 都能用, 更新的卡由驱动 JIT 那份 PTX. 设备不在覆盖范围内时 `auto`
+会回落 wgpu 而不是报错. 其中只有 sm_89 (RTX 40) 是实测过的.
 
 ## 免责声明
 

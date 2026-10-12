@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 
 use super::{confirm, Hit, SearchSpec};
 use host::{batch_size, Context, DeviceInfo};
+pub use host::{image_matches, TARGET_SMS};
 
 /// 单个 MD5 块能容纳的最大消息长度.
 const MAX_SINGLE_BLOCK_MESSAGE: usize = 55;

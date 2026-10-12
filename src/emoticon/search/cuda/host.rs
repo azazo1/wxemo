@@ -12,8 +12,11 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use libloading::Library;
 use tracing::debug;
 
-/// 构建期由 build.rs 生成的 cubin 镜像.
-const CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/wxemo_cuda_kernel.cubin"));
+/// 构建期由 build.rs 生成的多架构镜像.
+///
+/// 是 fatbin 而不是单架构 cubin: 驱动会从里面挑与当前设备匹配的那份 SASS,
+/// 挑不到时再 JIT 里面附带的 PTX. `cuModuleLoadData` 同时接受这两种形态.
+const IMAGE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/wxemo_cuda_kernel.fatbin"));
 
 /// 驱动 API 的返回码类型.
 type CuResult = i32;
@@ -69,16 +72,17 @@ pub struct DeviceInfo {
     pub multiprocessors: i32,
 }
 
-/// 构建期内核的目标计算能力, 形如 `89`, 由 `build.rs` 注入.
-pub const TARGET_SM: &str = env!("WXEMO_CUDA_SM");
+/// 构建期内核覆盖的计算能力, 逗号分隔, 形如 `75,80,86,89,90,120`, 由 `build.rs` 注入.
+pub const TARGET_SMS: &str = env!("WXEMO_CUDA_SMS");
 
 /// 随二进制发布的内核镜像能否在给定设备上加载.
 ///
-/// 镜像是构建期按单个计算能力编出来的 SASS, 驱动只肯在对应能力的设备上加载它.
-/// 不匹配时要在选后端阶段就发现, 好让 `auto` 回落到别的后端,
-/// 而不是等到搜索开始才抛一个驱动层的加载失败.
+/// 镜像是构建期按若干计算能力编出来的 fatbin, 驱动会自己挑匹配的那份, 所以这里
+/// 只需要判断设备的能力是否在覆盖范围内. 不匹配时要在选后端阶段就发现,
+/// 好让 `auto` 回落到别的后端, 而不是等到搜索开始才抛一个驱动层的加载失败.
 pub fn image_matches(info: &DeviceInfo) -> bool {
-    format!("{}{}", info.major, info.minor) == TARGET_SM
+    let capability = format!("{}{}", info.major, info.minor);
+    TARGET_SMS.split(',').any(|sms| sms == capability)
 }
 
 // ------------------------------------------------------------ 驱动符号表
@@ -346,14 +350,14 @@ impl Context {
                 (driver.cu_ctx_create)(&mut context, 0, device),
             )?;
 
-            // cubin 要按 8 字节对齐地交给驱动, include_bytes! 不保证对齐,
+            // 镜像要按 8 字节对齐地交给驱动, include_bytes! 不保证对齐,
             // 因此先复制到 u64 缓冲区再取指针.
-            let words = CUBIN.len().div_ceil(8);
+            let words = IMAGE.len().div_ceil(8);
             let mut aligned = vec![0u64; words];
             std::ptr::copy_nonoverlapping(
-                CUBIN.as_ptr(),
+                IMAGE.as_ptr(),
                 aligned.as_mut_ptr().cast::<u8>(),
-                CUBIN.len(),
+                IMAGE.len(),
             );
 
             let mut module: CuModule = std::ptr::null_mut();
@@ -361,8 +365,9 @@ impl Context {
             if code != CUDA_SUCCESS {
                 let _ = (driver.cu_ctx_destroy)(context);
                 bail!(
-                    "加载 CUDA 镜像失败 (cubin {} 字节): {}",
-                    CUBIN.len(),
+                    "加载 CUDA 镜像失败 (fatbin {} 字节, 覆盖 sm_{}): {}",
+                    IMAGE.len(),
+                    TARGET_SMS,
                     driver.describe(code)
                 );
             }

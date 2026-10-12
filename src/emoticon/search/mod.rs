@@ -213,13 +213,13 @@ fn metal_available() -> Option<()> {
 /// 镜像只在对应计算能力的设备上有效, 在这里挡住, `auto` 才能回落到别的后端.
 #[cfg(feature = "cuda")]
 fn cuda_available() -> Result<()> {
-    let info = cuda::host::probe()?;
-    if !cuda::host::image_matches(&info) {
+    let info = cuda::probe()?;
+    if !cuda::image_matches(&info) {
         bail!(
-            "设备计算能力 {}.{} 与内核编译目标 sm_{} 不一致",
+            "设备计算能力 {}.{} 不在内核覆盖范围 sm_{} 内",
             info.major,
             info.minor,
-            cuda::host::TARGET_SM
+            cuda::TARGET_SMS
         );
     }
     info!(
@@ -293,14 +293,6 @@ pub fn run(spec: &SearchSpec, bar: &ProgressBar, backend: Resolved) -> Result<Op
         Resolved::Metal => bail!("metal 后端只在 macOS 上可用"),
         Resolved::Wgpu => gpu::run(spec, bar),
     }
-}
-
-/// 首块魔数是否达到判定强度.
-///
-/// GPU 后端用它在内核侧做粗筛, 这里保留给内核与复核共用同一套阈值.
-#[cfg_attr(not(feature = "cuda"), allow(dead_code))]
-pub(crate) fn strong_magic(block: &[u8; 16]) -> bool {
-    match_magic(block).is_some_and(|(_, len)| len >= MIN_STRENGTH)
 }
 
 /// 复核一个候选: 全部样本首块都命中魔数才算命中, 命中后整文件解密确认填充情况.

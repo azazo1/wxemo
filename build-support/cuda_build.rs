@@ -36,10 +36,47 @@ use std::process::Command;
 const KERNEL_SOURCE: &str = "src/emoticon/search/cuda/kernel.cu";
 
 /// 产物名字, host.rs 用 `include_bytes!` 引用同一个名字.
-const KERNEL_OUTPUT: &str = "wxemo_cuda_kernel.cubin";
+const KERNEL_OUTPUT: &str = "wxemo_cuda_kernel.fatbin";
 
-/// 默认目标架构. 默认值对应 Ada (RTX 40 系), 可用 `WXEMO_CUDA_ARCH` 覆盖.
-const DEFAULT_ARCH: &str = "sm_89";
+/// 默认为哪些计算能力编出 SASS.
+///
+/// 一份 fatbin 里放多个架构的镜像, 驱动加载时自己挑匹配的那份, 所以运行期
+/// 不需要做任何选择. 用 `nvcc -fatbin` 加多个 `-gencode` 产出.
+///
+/// 用 `WXEMO_CUDA_ARCH` 覆盖, 值写成逗号分隔的计算能力, 例如 `89` 或 `89,120`.
+///
+/// sm_89 (Ada, RTX 40) 是唯一实测过的目标, 必须留在列表里: 去掉它会让
+/// 现在能用的机器掉回 wgpu.
+const DEFAULT_ARCHES: &[&str] = &["75", "80", "86", "89", "90", "120"];
+
+/// 把 `WXEMO_CUDA_ARCH` 的值拆成计算能力列表.
+///
+/// 接受 `89` 和 `89,120` 这类写法, 也接受带 `sm_` 前缀的写法.
+fn parse_arches(value: &str) -> Vec<String> {
+    let arches: Vec<String> = value
+        .split(',')
+        .map(|item| item.trim().trim_start_matches("sm_").to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+    assert!(!arches.is_empty(), "WXEMO_CUDA_ARCH 没有给出任何计算能力");
+    arches
+}
+
+/// 生成 `nvcc` 的 gencode 参数.
+///
+/// 每个计算能力出一份 SASS; 再为最新的那个附一份 PTX, 让比列表更新的显卡
+/// 也能由驱动 JIT 起来. 代价只有几十 KB, 换来的是不必为将来每一代卡重新发版.
+fn gencode_flags(arches: &[String]) -> String {
+    let mut flags = String::new();
+    for arch in arches {
+        flags.push_str(&format!(" -gencode arch=compute_{arch},code=sm_{arch}"));
+    }
+    let newest = arches.last().expect("调用方已保证非空");
+    flags.push_str(&format!(
+        " -gencode arch=compute_{newest},code=compute_{newest}"
+    ));
+    flags
+}
 
 /// 编译内核; 失败时以构建错误的形式抛出, 不做降级.
 pub fn compile() {
@@ -53,22 +90,23 @@ pub fn compile() {
     println!("cargo:rerun-if-env-changed=WXEMO_CUDA_VCVARS");
     println!("cargo:rerun-if-env-changed=WXEMO_CUDA_ARCH");
 
-    let arch = env::var("WXEMO_CUDA_ARCH").unwrap_or_else(|_| DEFAULT_ARCH.to_string());
-    // 把目标计算能力告诉运行期: 镜像只能在对应能力的设备上加载, 运行期要据此判断
-    // 能不能真的用 CUDA, 而不是等搜索开始才拿到驱动的加载失败.
-    println!(
-        "cargo:rustc-env=WXEMO_CUDA_SM={}",
-        arch.trim_start_matches("sm_")
-    );
+    let arches = match env::var("WXEMO_CUDA_ARCH") {
+        Ok(value) => parse_arches(&value),
+        Err(_) => DEFAULT_ARCHES.iter().map(|item| item.to_string()).collect(),
+    };
+    let flags = gencode_flags(&arches);
+    // 把覆盖的计算能力告诉运行期: 设备不在列表里时镜像会被驱动拒绝,
+    // 运行期要据此判断能不能真的用 CUDA, 而不是等搜索开始才拿到加载失败.
+    println!("cargo:rustc-env=WXEMO_CUDA_SMS={}", arches.join(","));
     let nvcc = find_nvcc().unwrap_or_else(|| {
         panic!("找不到 nvcc, 请安装 CUDA Toolkit, 或用 WXEMO_CUDA_NVCC 指定 nvcc 的完整路径")
     });
     let vcvars = find_vcvars();
 
     if cfg!(windows) {
-        compile_native(&source, &output, &nvcc, vcvars.as_deref(), &arch);
+        compile_native(&source, &output, &nvcc, vcvars.as_deref(), &flags);
     } else if cfg!(target_os = "linux") {
-        compile_through_windows(&source, &output, &nvcc, vcvars.as_deref(), &arch);
+        compile_through_windows(&source, &output, &nvcc, vcvars.as_deref(), &flags);
     } else {
         panic!(
             "cuda feature 目前只支持 Windows 与 WSL (通过 interop 调 Windows nvcc), \
@@ -191,7 +229,7 @@ fn read_dirs(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Windows 原生: 生成 .bat 后交给 cmd.exe 执行.
-fn compile_native(source: &Path, output: &Path, nvcc: &Path, vcvars: Option<&Path>, arch: &str) {
+fn compile_native(source: &Path, output: &Path, nvcc: &Path, vcvars: Option<&Path>, flags: &str) {
     let script_dir = env::temp_dir().join(format!("wxemo-cuda-{}", std::process::id()));
     fs::create_dir_all(&script_dir).expect("创建构建脚本目录失败");
 
@@ -200,7 +238,7 @@ fn compile_native(source: &Path, output: &Path, nvcc: &Path, vcvars: Option<&Pat
         &nvcc.display().to_string(),
         &source.display().to_string(),
         &output.display().to_string(),
-        arch,
+        flags,
         vcvars.map(|path| path.display().to_string()).as_deref(),
     );
     fs::write(&script, text).expect("写入构建脚本失败");
@@ -215,7 +253,7 @@ fn compile_through_windows(
     output: &Path,
     nvcc: &Path,
     vcvars: Option<&Path>,
-    arch: &str,
+    flags: &str,
 ) {
     // WSL 的 interop 只在绝对路径下可靠, cmd.exe 在 PATH 里通常找不到.
     let cmd = Path::new("/mnt/c/Windows/System32/cmd.exe");
@@ -254,7 +292,7 @@ fn compile_through_windows(
             &nvcc_windows,
             &source_windows,
             &output_windows,
-            arch,
+            flags,
             vcvars_windows.as_deref(),
         ),
     )
@@ -286,7 +324,7 @@ fn batch_script(
     nvcc: &str,
     source: &str,
     output: &str,
-    arch: &str,
+    flags: &str,
     vcvars: Option<&str>,
 ) -> String {
     let mut script = String::new();
@@ -297,7 +335,7 @@ fn batch_script(
         script.push_str("if errorlevel 1 exit /b 1\r\n");
     }
     script.push_str(&format!(
-        "\"{nvcc}\" -cubin -arch={arch} -O3 -Xcompiler \"/utf-8\" -o \"{output}\" \"{source}\"\r\n"
+        "\"{nvcc}\" -fatbin{flags} -O3 -Xcompiler \"/utf-8\" -o \"{output}\" \"{source}\"\r\n"
     ));
     script.push_str("if errorlevel 1 exit /b 1\r\n");
     script.push_str("exit /b 0\r\n");

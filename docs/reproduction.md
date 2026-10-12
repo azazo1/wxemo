@@ -161,9 +161,16 @@ MD5 的循环左移用 `__funnelshift_l` 走单条 SHF 指令.
 | WSL | 本机没有 nvcc, 通过 WSL interop 调用 Windows 侧的 `cmd.exe`, 在批处理脚本里加载 `vcvars64.bat` 后调用 Windows 的 `nvcc.exe` |
 | macOS / 其他 | 不支持, 构建时明确报错而不是静默跳过 |
 
-产物是 cubin 而不是 PTX: CUDA 13.4 产出的 PTX 是 9.4 版本, 高于当前驱动
-(CUDA 13.0) 支持的版本, 加载时会返回 `CUDA_ERROR_UNSUPPORTED_PTX_VERSION`.
-cubin 已经是落到 SASS 的镜像, 由驱动直接加载.
+产物是一份 **fatbin**, 里面装多个架构的镜像. 构建脚本为 `sm_75 / 80 / 86 / 89 / 90 / 120`
+各出一份 SASS, 再为最新的 `sm_120` 附一份 PTX. 运行期把整份镜像交给
+`cuModuleLoadData`, 驱动自己挑匹配的 SASS; 列表之外的**更新**显卡则由驱动 JIT
+那份 PTX 跑起来, 因此不必为每一代新卡重新发版.
+
+不直接用 PTX 的原因: CUDA 13.x 产出的 PTX 版本较新, 旧驱动会返回
+`CUDA_ERROR_UNSUPPORTED_PTX_VERSION`. fatbin 里的 SASS 不受这个限制.
+
+> 只有 `sm_89` (Ada, RTX 40) 是实测过的目标. 其余架构依赖的是"驱动会从 fatbin
+> 里挑选匹配镜像"这一官方行为, 属于文档保证而非本项目实测结果.
 
 运行期只依赖 CUDA 驱动 (`nvcuda.dll` 或 `libcuda.so`), 不需要 nvrtc.
 WSL 只提供 `/usr/lib/wsl/lib/libcuda.so`, 也能直接用.
@@ -172,7 +179,8 @@ WSL 只提供 `/usr/lib/wsl/lib/libcuda.so`, 也能直接用.
 
 - `WXEMO_CUDA_NVCC`: `nvcc` 可执行文件路径.
 - `WXEMO_CUDA_VCVARS`: `vcvars64.bat` 路径.
-- `WXEMO_CUDA_ARCH`: 目标架构, 默认 `sm_89` (Ada).
+- `WXEMO_CUDA_ARCH`: 覆盖架构列表, 逗号分隔的计算能力, 例如 `89` 或 `89,120`.
+  留空时用上面的默认列表. 缩减列表会同时缩小可用的显卡范围.
 
 #### 性能特征
 
