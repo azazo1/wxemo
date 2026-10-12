@@ -9,9 +9,9 @@
 //! 根目录由用户配置 (例如 `D:/wechat`), 账号目录名形如
 //! `wxid_xxxxxxxx_7e1e` —— 尾部 4 位十六进制是微信加的, 不参与密钥派生.
 
+mod access;
 pub mod defaults;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -77,11 +77,8 @@ pub fn normalize_root(raw: &str) -> PathBuf {
 }
 
 /// 在根目录下递归找 `xwechat_files`, 返回找到的目录列表.
-fn find_account_roots(root: &Path) -> Vec<PathBuf> {
+fn find_account_roots(root: &Path) -> Result<Vec<PathBuf>> {
     let mut found = Vec::new();
-    if !root.is_dir() {
-        return found;
-    }
     let mut queue = vec![(root.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = queue.pop() {
         if dir.file_name().is_some_and(|name| name == ACCOUNT_ROOT) {
@@ -91,24 +88,26 @@ fn find_account_roots(root: &Path) -> Vec<PathBuf> {
         if depth >= MAX_DEPTH {
             continue;
         }
-        let Ok(entries) = fs::read_dir(&dir) else {
+        let Some(entries) = access::read_directory(&dir)? else {
             continue;
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.with_context(|| format!("读取目录项失败: {}", dir.display()))?;
             let path = entry.path();
-            // 不跟随符号链接, 避免在奇怪的数据目录上绕圈.
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            // 不跟随符号链接, 避免在数据目录中绕圈.
+            let kind = entry.file_type().with_context(|| format!("读取文件类型失败: {}", path.display()))?;
+            if kind.is_dir() {
                 queue.push((path, depth + 1));
             }
         }
     }
     found.sort();
-    found
+    Ok(found)
 }
 
 /// 判断目录是否像一个账号目录.
-fn looks_like_account(dir: &Path) -> bool {
-    dir.join("business").join("emoticon").is_dir()
+fn looks_like_account(dir: &Path) -> Result<bool> {
+    access::is_directory(&dir.join("business").join("emoticon"))
 }
 
 /// 从若干根目录中发现全部账号, 按 wxid 去重.
@@ -117,25 +116,28 @@ pub fn find_accounts(roots: &[PathBuf]) -> Result<Vec<Account>> {
     let mut seen: Vec<PathBuf> = Vec::new();
 
     for root in roots {
-        if !root.exists() {
+        let Some(entries) = access::read_directory(root)? else {
             tracing::warn!(root = %root.display(), "数据根目录不存在, 已跳过");
             continue;
-        }
+        };
+        drop(entries);
 
         // 情形一: 根目录本身就是账号目录.
         let mut candidates = Vec::new();
-        if looks_like_account(root) {
+        if looks_like_account(root)? {
             candidates.push(root.clone());
         }
 
         // 情形二: 根目录下有 xwechat_files.
-        for account_root in find_account_roots(root) {
-            let Ok(entries) = fs::read_dir(&account_root) else {
+        for account_root in find_account_roots(root)? {
+            let Some(entries) = access::read_directory(&account_root)? else {
                 continue;
             };
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = entry.with_context(|| format!("读取目录项失败: {}", account_root.display()))?;
                 let path = entry.path();
-                if path.is_dir() && looks_like_account(&path) {
+                let kind = entry.file_type().with_context(|| format!("读取文件类型失败: {}", path.display()))?;
+                if kind.is_dir() && looks_like_account(&path)? {
                     candidates.push(path);
                 }
             }

@@ -167,9 +167,11 @@ fn detect(candidates: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut found = Vec::new();
     let mut seen = Vec::new();
     for candidate in candidates {
-        if !candidate.is_dir() {
+        // 真实目录读取可能触发 macOS 的容器访问授权, 不用 is_dir 静默过滤.
+        let Some(entries) = super::access::read_directory(candidate)? else {
             continue;
-        }
+        };
+        drop(entries);
         let canonical = candidate.canonicalize()?;
         if seen.contains(&canonical) {
             continue;

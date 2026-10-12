@@ -45,6 +45,19 @@ Linux 优先读 `XDG_DOCUMENTS_DIR`, 再解析 `user-dirs.dirs`, 不执行其中
 常规配置使用 `config.toml`, 账号密钥使用 `auth.json`, 两者带格式版本字段.
 密钥文件不能公开分享. `config status` 会显示密钥内容, 不要将输出贴到公开页面.
 
+## macOS 容器访问授权
+
+探测微信容器时, 程序会主动尝试读取目录, 而不是只检查路径是否存在.
+macOS 14+ 可能因此显示其他应用容器的访问授权提示, 请按需要允许或拒绝.
+系统决定是否弹窗, 已有拒绝记录或终端宿主的权限可能影响结果.
+程序不会重置 TCC 决定, 也不能自行获取完全磁盘访问权限.
+
+访问被拒绝时会报告具体路径并保留系统错误, 不再当作目录不存在继续要求输入路径.
+授权后仍找不到账号时, 才继续检查是否具有 `<账号>/business/emoticon` 布局.
+当前实现不包含文件夹选择器或持久安全书签, 保存路径不等于保存系统授权.
+macOS 专属处理位于 `src/platform/macos/`.
+依据见 [Apple 容器访问文档](https://developer.apple.com/documentation/security/accessing-files-from-the-macos-app-sandbox).
+
 ## 搜索 seed
 
 ```shell

@@ -12,6 +12,7 @@ mod config;
 mod discover;
 mod emoticon;
 mod logging;
+mod platform;
 mod version;
 
 use emoticon::{container, crypto, search};
