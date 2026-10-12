@@ -62,6 +62,7 @@ macOS 专属处理位于 `src/platform/macos/`.
 
 ```shell
 wxemo seed search --account wxid_example123456
+wxemo seed search --account wxid_example123456 --backend wgpu
 ```
 
 默认从持久化目录选取 3 个样本, 穷举 `0..4294967296`.
@@ -72,6 +73,33 @@ wxemo seed search --account wxid_example123456
 搜索可能持续数分钟, 进度条和阶段日志用于观察是否仍在推进.
 seed 的来源在二进制接口中是 64 位整数, `0..2^32` 是默认搜索范围,
 不是对所有微信版本取值范围的保证.
+
+### 计算后端
+
+`--backend` 选择判定在哪种计算单元上跑, 默认 `auto`.
+
+| 取值 | 行为 |
+| --- | --- |
+| `auto` | 能用 wgpu 就用 wgpu, 否则记 `info` 日志回落到 CPU, 日志里写明实际选的路线和 adapter |
+| `cpu` | 只用多核 CPU 实现, 与旧版本行为一致 |
+| `wgpu` | 只用 GPU, 初始化失败时直接报错, 不静默回落 |
+
+wgpu 后端把候选判定写成一份 WGSL 计算着色器, 每个 invocation 处理一个候选:
+拼出 `"<seed 十进制>" + 账号标识 + "EMOTICON"`, 在着色器里做单块 MD5 得到密钥,
+再做一次 AES-128 单块解密 (CBC 首块的 IV 就是密钥本身) 并与密钥异或得到明文块,
+最后比对 PNG / GIF / JPEG / WebP / wxgf 的魔数. 一套 WGSL 覆盖 Metal / Vulkan / DX12.
+
+GPU 只负责"疑似命中", 报出的候选仍然走与 CPU 完全相同的复核函数,
+所以两个后端的判定条件不会漂移, 包括命中后的整文件填充检查.
+
+使用上需要注意:
+
+- GPU 后端的 seed 在着色器里是 `u32`, 覆盖 `0..2^32`. 范围超出时超出部分自动回落到 CPU.
+- 消息要能装进一个 MD5 块, 也就是 `seed 位数 + 账号标识 + 后缀 <= 55` 字节.
+  账号标识超过 37 字节时 GPU 后端会明确报错, `auto` 会回落到 CPU.
+- 每次运行有约 0.4 秒的固定初始化开销 (枚举 adapter, 建设备, 编译着色器),
+  其中着色器编译占大头. 搜索范围较小时这部分占比很高, 长范围搜索可以忽略.
+- `auto` 只在开工前探测一次后端, 不会在搜索中途切换.
 
 ## 管理 seed 记录
 

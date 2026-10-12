@@ -186,6 +186,10 @@ struct SeedArgs {
     /// 判定用的样本数量.
     #[arg(long, default_value_t = 3)]
     samples: usize,
+
+    /// 搜索后端: auto 优先 GPU 并在不可用时回落 CPU, cpu 强制 CPU, wgpu 强制 GPU 并在不可用时报错.
+    #[arg(long, value_name = "auto|cpu|wgpu", default_value = "auto")]
+    backend: search::Backend,
 }
 
 #[derive(Args, Debug)]
@@ -275,6 +279,7 @@ fn main() -> ExitCode {
                     end: args.end,
                     threads: args.threads,
                     sample_count: args.samples,
+                    backend: args.backend,
                 },
                 interactive,
             ),

@@ -61,6 +61,17 @@ plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 
 账号标识不带目录末尾的 4 位十六进制后缀. 默认搜索范围为 `0..2^32`,
 可通过 `seed search --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
 
+判定可以跑在多核 CPU 上, 也可以跑在 GPU 上:
+
+```shell
+wxemo seed search --backend auto   # 默认, 能用 GPU 就用, 否则回落 CPU
+wxemo seed search --backend cpu    # 只用多核 CPU
+wxemo seed search --backend wgpu   # 只用 GPU, 不可用时直接报错
+```
+
+GPU 后端是一份 WGSL 计算着色器, 在着色器里做单块 MD5 和 AES-128 解密,
+一套内核覆盖 Metal / Vulkan / DX12. 详细说明见 [使用说明](docs/reproduction.md).
+
 ## 免责声明
 
 仅用于学习和自查自己的本地微信数据. 不联网上传数据, 不修改微信数据库.
