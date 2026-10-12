@@ -90,6 +90,28 @@ wxemo seed remove --account wxid_example123456
 - `search` 是原 `wxemo seed` 的替代入口. 直接运行 `wxemo seed` 只显示用法,
   不会启动长时间搜索.
 
+## 备份与恢复 seed
+
+```shell
+wxemo seed export --out secrets/seed-backup.json
+wxemo seed export --account wxid_example123456 --out secrets/account-seed.json
+wxemo seed import --file secrets/seed-backup.json
+wxemo seed import --file secrets/seed-backup.json --account wxid_example123456
+```
+
+- `export` 要求显式指定 `--out`, 未指定账号时导出全部已保存记录.
+- 备份是带 `version` 的 JSON, 只保存账号与 seed. 恢复时重新派生 key.
+  文件是明文且足以派生解密密钥, 不要公开分享或提交到 Git.
+- 默认不覆盖输出文件, 需要时显式加 `--force`.
+  即使加了 `--force`, 也不能覆盖正在使用的配置或密钥文件, 不替换符号链接或目录.
+- Unix 下导出文件在创建时即使用 `0600` 权限. Windows 使用目标目录的访问控制,
+  请把文件放在仅自己可访问的位置.
+- 导入文件前检查格式版本, 账号和已有记录冲突. 校验失败不写入任何导入记录.
+  已有记录需要 `--force` 才会覆盖, 不删除备份中未包含的其他账号.
+- 单个数值导入仍使用 `seed import <seed> --account <账号>`, 不能同时提供 seed 和 `--file`.
+- 导出和文件恢复的日志只显示数量或路径, 不打印 seed 或 key.
+  导入只派生密钥, 不代表已验证当前微信数据的兼容性.
+
 ## 解密与输出
 
 ```shell

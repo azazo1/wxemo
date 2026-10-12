@@ -51,7 +51,7 @@ enum Command {
     /// 列出发现的微信账号.
     Accounts(AccountsArgs),
 
-    /// 搜索, 查看, 导入或删除账号的 seed 记录.
+    /// 搜索, 查看, 导入, 导出或删除账号的 seed 记录.
     #[command(subcommand)]
     Seed(SeedCommand),
 
@@ -101,14 +101,30 @@ enum SeedCommand {
         #[arg(long)]
         account: Option<String>,
     },
-    /// 导入已知 seed 并派生密钥, 不搜索也不验证微信密文.
+    /// 导入已知 seed 或备份文件并派生密钥, 不验证微信密文.
     Import {
-        /// 已知的十进制 seed.
-        seed: u64,
-        /// 账号标识 (wxid) 或账号目录名.
+        /// 已知的十进制 seed, 与 --file 二选一.
+        #[arg(required_unless_present = "file", conflicts_with = "file", requires = "account")]
+        seed: Option<u64>,
+        /// 账号标识, 导入文件时省略表示导入全部记录.
+        #[arg(long, required_unless_present = "file")]
+        account: Option<String>,
+        /// 由 seed export 生成的 JSON 备份文件.
         #[arg(long)]
-        account: String,
-        /// 覆盖该账号已有的记录.
+        file: Option<PathBuf>,
+        /// 覆盖已有账号记录, 不删除其他账号.
+        #[arg(long)]
+        force: bool,
+    },
+    /// 导出敏感 seed 备份文件, 不在终端显示 seed 或密钥.
+    Export {
+        /// 仅导出指定账号, 省略时导出全部已保存记录.
+        #[arg(long)]
+        account: Option<String>,
+        /// 输出 JSON 备份路径, 文件包含敏感 seed.
+        #[arg(long, short)]
+        out: PathBuf,
+        /// 覆盖已有输出文件, 不允许覆盖正在使用的配置或密钥文件.
         #[arg(long)]
         force: bool,
     },
@@ -227,11 +243,16 @@ fn main() -> ExitCode {
                 interactive,
             ),
             SeedCommand::Status { account } => commands::seed::manage::status(account.as_deref()),
-            SeedCommand::Import {
-                seed,
-                account,
-                force,
-            } => commands::seed::manage::import(&account, seed, force),
+            SeedCommand::Import { seed, account, file, force } => {
+                if let Some(file) = file {
+                    commands::seed::transfer::import_file(&file, account.as_deref(), force)
+                } else if let (Some(seed), Some(account)) = (seed, account) {
+                    commands::seed::manage::import(&account, seed, force)
+                } else {
+                    Err(anyhow::anyhow!("导入需要 seed 与 --account, 或 --file"))
+                }
+            }
+            SeedCommand::Export { account, out, force } => commands::seed::transfer::export(account.as_deref(), &out, force),
             SeedCommand::Remove { account, yes } => {
                 commands::seed::manage::remove(&account, yes, interactive)
             }

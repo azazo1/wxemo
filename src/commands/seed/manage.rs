@@ -8,7 +8,7 @@ use crate::config::{parse_key, Auth};
 use crate::{crypto, discover};
 
 /// 仅规范化显式账号, 管理记录不依赖微信目录仍然存在.
-fn account_id(raw: &str) -> Result<String> {
+pub(super) fn account_id(raw: &str) -> Result<String> {
     let raw = raw.trim();
     if raw.is_empty()
         || raw
@@ -55,7 +55,7 @@ fn show_status(auth: &Auth, account: &str) {
     }
 }
 
-fn import_record(auth: &mut Auth, raw: &str, seed: u64, force: bool) -> Result<String> {
+pub(super) fn import_record(auth: &mut Auth, raw: &str, seed: u64, force: bool) -> Result<String> {
     let account = account_id(raw)?;
     if auth.get(&account).is_some() && !force {
         bail!("{account} 已有记录, 如需覆盖请加 --force");

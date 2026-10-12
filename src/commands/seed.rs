@@ -1,6 +1,7 @@
 //! `wxemo seed search`: 暴力搜索账号的 seed.
 
 pub mod manage;
+pub mod transfer;
 
 use std::fs;
 use std::path::{Path, PathBuf};

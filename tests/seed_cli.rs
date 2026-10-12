@@ -128,6 +128,86 @@ fn management_isolated_import_status_overwrite_and_confirmed_remove() {
     assert_eq!(fixture.records(), after);
 }
 
+#[test]
+fn backup_round_trip_selection_and_overwrite_guards() {
+    let fixture = Fixture::new();
+    fixture.run(&["seed", "import", "42424242", "--account", "wxid_a"], true);
+    fixture.run(&["seed", "import", "43", "--account", "wxid_b"], true);
+    let original = fixture.records();
+    let all = fixture.0.join("backup.json");
+    let single = fixture.0.join("single.json");
+    let all_arg = all.to_str().unwrap();
+    let single_arg = single.to_str().unwrap();
+    fixture.run(&["seed", "export"], false);
+    let output = fixture.run(&["seed", "export", "--out", all_arg], true);
+    let backup: Value = serde_json::from_slice(&fs::read(&all).unwrap()).unwrap();
+    assert_eq!(backup["version"], 1);
+    assert_eq!(backup["accounts"].as_object().unwrap().len(), 2);
+    assert_eq!(backup["accounts"]["wxid_a"]["seed"], 42424242u64);
+    assert!(backup["accounts"]["wxid_a"].get("key").is_none());
+    for bytes in [&output.stdout, &output.stderr] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(!text.contains("42424242"));
+        assert!(!text.contains(original["accounts"]["wxid_a"]["key"].as_str().unwrap()));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&all).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let before = fs::read(&all).unwrap();
+    fixture.run(&["seed", "export", "--out", all_arg], false);
+    fixture.run(&["seed", "export", "--out", all_arg, "--account", "wxid_missing", "--force"], false);
+    assert_eq!(fs::read(&all).unwrap(), before);
+    fixture.run(&["seed", "export", "--out", single_arg, "--account", "wxid_a_7e1e"], true);
+    let selected: Value = serde_json::from_slice(&fs::read(&single).unwrap()).unwrap();
+    assert_eq!(selected["accounts"].as_object().unwrap().len(), 1);
+    let auth_path = fixture.0.join("cfg/auth.json");
+    fixture.run(&["seed", "export", "--out", auth_path.to_str().unwrap(), "--force"], false);
+    let config_path = fixture.0.join("cfg/config.toml");
+    fixture.run(&["seed", "export", "--out", config_path.to_str().unwrap(), "--force"], false);
+    assert!(!config_path.exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let alias = fixture.0.join("backup-alias.json");
+        symlink(&all, &alias).unwrap();
+        fixture.run(&["seed", "export", "--out", alias.to_str().unwrap(), "--force"], false);
+        assert_eq!(fs::read(&all).unwrap(), before);
+        fs::set_permissions(&single, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    assert_eq!(fixture.records(), original);
+    fixture.run(&["seed", "remove", "--account", "wxid_a", "--yes"], true);
+    let partial = fixture.records();
+    fixture.run(&["seed", "import", "--file", all_arg], false);
+    assert_eq!(fixture.records(), partial);
+    fixture.run(&["seed", "import", "--file", all_arg, "--account", "wxid_a_7e1e"], true);
+    for account in ["wxid_a", "wxid_b"] {
+        let restored = fixture.records();
+        assert_eq!(restored["accounts"][account]["seed"], original["accounts"][account]["seed"]);
+        assert_eq!(restored["accounts"][account]["key"], original["accounts"][account]["key"]);
+    }
+    fixture.run(&["seed", "import", "99", "--account", "wxid_b", "--force"], true);
+    fixture.run(&["seed", "import", "--file", all_arg, "--force"], true);
+    assert_eq!(fixture.records()["accounts"]["wxid_b"]["seed"], 43);
+    fixture.run(&["seed", "export", "--out", single_arg, "--force"], true);
+    let overwritten: Value = serde_json::from_slice(&fs::read(&single).unwrap()).unwrap();
+    assert_eq!(overwritten["accounts"].as_object().unwrap().len(), 2);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&single).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    let bad = fixture.0.join("bad.json");
+    fs::write(&bad, br#"{"version":2,"accounts":{"wxid_new":{"seed":44}}}"#).unwrap();
+    let before = fixture.records();
+    fixture.run(&["seed", "import", "--file", bad.to_str().unwrap(), "--force"], false);
+    fs::write(&bad, b"broken json").unwrap();
+    fixture.run(&["seed", "import", "--file", bad.to_str().unwrap(), "--force"], false);
+    fixture.run(&["seed", "import", "42", "--account", "wxid_new", "--file", all_arg], false);
+    assert_eq!(fixture.records(), before);
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn default_discovery_works_before_configuration_and_initializes_selected_root() {

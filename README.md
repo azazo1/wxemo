@@ -24,8 +24,8 @@ wxemo extract --out out/emoticons --manifest
 程序会向下查找账号. 在 WSL 中会把 `D:/wechat` 转为 `/mnt/d/wechat`.
 
 - 配置保存在 `~/.config/wxemo/`, 可用 `WXEMO_CONFIG_DIR` 指定隔离目录.
-- `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值,
-  `seed remove` 删除记录. `extract` 自动复用保存的密钥.
+- `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值或备份,
+  `seed export` 导出敏感备份文件, `seed remove` 删除记录. `extract` 自动复用保存的密钥.
 - PNG / GIF / JPEG / WebP 按格式结构拆分. 未识别片段保留为 `.bin`.
 - `.wxgf` 原样保留, 不承诺直接播放或转码. 使用 `--no-split` 可保留整个明文容器.
 - `wxemo doctor` 检查配置与账号发现情况, `--verbose` 显示诊断日志.
