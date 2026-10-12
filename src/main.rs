@@ -186,6 +186,10 @@ struct SeedArgs {
     /// 判定用的样本数量.
     #[arg(long, default_value_t = 3)]
     samples: usize,
+
+    /// 搜索后端: auto 按本机能力选择, cpu 只用标量多核, simd 要求 SIMD 多路.
+    #[arg(long, default_value_t = search::Backend::Auto)]
+    backend: search::Backend,
 }
 
 #[derive(Args, Debug)]
@@ -275,6 +279,7 @@ fn main() -> ExitCode {
                     end: args.end,
                     threads: args.threads,
                     sample_count: args.samples,
+                    backend: args.backend,
                 },
                 interactive,
             ),

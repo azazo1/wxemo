@@ -27,6 +27,9 @@ wxemo decode out/emoticons --out out/images
 - 配置保存在 `~/.config/wxemo/`, 可用 `WXEMO_CONFIG_DIR` 指定隔离目录.
 - `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值或备份,
   `seed export` 导出敏感备份文件, `seed remove` 删除记录. `extract` 自动复用保存的密钥.
+- `seed search --backend <auto|cpu|simd>` 选择搜索后端. 默认 `auto`:
+  x86_64 有 AVX2 或 aarch64 有 NEON 时用多路 SIMD 的 MD5, 否则用标量多核.
+  显式指定 `simd` 而本机不支持时直接报错, 不会静默退回标量.
 - PNG / GIF / JPEG / WebP 按格式结构拆分. 未识别片段保留为 `.bin`.
 - `.wxgf` 明文原样保留. `decode` 使用本机已有的微信媒体库导出完整 PNG/APNG,
   保留动画时序和透明度. 原生库不可用时明确报错, 平台条件见使用说明.
@@ -49,7 +52,14 @@ just dist
 ```
 
 源码按命令层 `src/commands/` 与表情核心 `src/emoticon/` 组织.
+seed 搜索的后端实现在 `src/emoticon/search/`: `scalar.rs` 是标量多核路径,
+`simd/` 下按架构分成 `x86.rs` (AVX2, 8 路) 与 `aarch64.rs` (NEON, 4 路).
 加密方案与反汇编证据见 [分析文档](docs/crypto-analysis.md).
+
+`.cargo/config.toml` 为 aarch64 打开 `aes` crate 的 ARMv8 密码学扩展后端.
+该 crate 在 x86_64 上默认会做运行期 AES-NI 检测, 在 aarch64 上却需要显式开启,
+不开启就会静默使用纯软件实现, 使 Apple Silicon 等平台明显偏慢.
+开启后仍由 `cpufeatures` 做运行期检测, 缺少该扩展的 CPU 照旧走软件路径.
 
 ## 加密方案
 
@@ -59,7 +69,12 @@ plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 
 ```
 
 账号标识不带目录末尾的 4 位十六进制后缀. 默认搜索范围为 `0..2^32`,
-可通过 `seed search --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
+可通过 `seed search --start / --end / --threads / --backend` 调整.
+搜索速度随 CPU, 样本与后端变化.
+
+候选消息不超过 55 字节, 填充后正好是一个 MD5 块, 因此 `simd` 后端可以一次算多路:
+x86_64 用 AVX2 一次算 8 路, aarch64 用 NEON 一次算 4 路. AES 仍按路单独解密首块,
+第一个样本不匹配的路立即淘汰. 两种后端的判定条件完全一致, 命中结果也一致.
 
 ## 免责声明
 

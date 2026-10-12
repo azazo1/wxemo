@@ -13,7 +13,9 @@ use aes::Aes128;
 use md5::{Digest, Md5};
 
 /// 拼接在消息末尾的固定后缀, 源码中以 8 字节立即数内联.
-const SUFFIX: &[u8] = b"EMOTICON";
+///
+/// SIMD 后端要按字节预排消息块, 因此这里对 crate 内部可见.
+pub(crate) const SUFFIX: &[u8] = b"EMOTICON";
 
 /// 候选消息缓冲长度: 20 位十进制 + 账号标识 + 后缀, 留足余量.
 pub const MAX_MESSAGE: usize = 20 + 128 + 8;

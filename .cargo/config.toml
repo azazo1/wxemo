@@ -1,0 +1,12 @@
+# aarch64 上启用 aes crate 的 ARMv8 密码学扩展后端.
+#
+# `aes` 0.8 对两个平台的处理并不对称:
+#
+# - x86_64 默认走 autodetect, 运行期检测 AES-NI, 有就用.
+# - aarch64 只有设置了 `aes_armv8` 才会编入 armv8 后端, 否则静默回落到纯软件的
+#   fixslicing 实现, 于是同一份代码在 Apple Silicon 上反而比 x86_64 慢好几倍.
+#
+# 这里只影响 `cfg(aes_armv8)` 的取值, 不改变任何 crate 的行为:
+# 编入 armv8 后仍然由 cpufeatures 做运行期检测, 缺少该扩展的 CPU 依旧走软件实现.
+[target.'cfg(target_arch = "aarch64")']
+rustflags = ["--cfg", "aes_armv8"]
