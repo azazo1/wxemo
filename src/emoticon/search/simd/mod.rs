@@ -165,7 +165,11 @@ fn scan_plan(start: u64, end: u64, spec: &SearchSpec, plan: &Plan) -> Option<Hit
         let mut counter = Decimal::new(cursor);
         let mut seed = cursor;
 
-        while seed + LANES as u64 <= segment_end {
+        // 用 checked_add 判断: 区间上界逼近 u64::MAX 时, 朴素的 seed + LANES 会溢出.
+        while seed
+            .checked_add(LANES as u64)
+            .is_some_and(|next| next <= segment_end)
+        {
             let keys = batch_keys(plan, &mut counter);
             if let Some(hit) = evaluate(seed, plan, spec, &keys) {
                 return Some(hit);
@@ -414,7 +418,10 @@ mod tests {
             let keys = batch_keys(&plan, &mut counter);
             let digits = decimal_len(base);
             for (lane, key) in keys.iter().enumerate() {
-                let seed = base + lane as u64;
+                // 探测值逼近 u64::MAX, 路数多于 4 时朴素的 base + lane 会溢出.
+                let Some(seed) = base.checked_add(lane as u64) else {
+                    break;
+                };
                 // 搜索路径按位数分段, 一批里不会混着两种位数, 这里也只比对同段的路.
                 if decimal_len(seed) != digits {
                     break;
