@@ -9,8 +9,8 @@
 
 mod commands;
 mod config;
-mod emoticon;
 mod discover;
+mod emoticon;
 mod logging;
 mod version;
 

@@ -11,7 +11,10 @@ pub fn run(roots: &[String]) -> Result<()> {
     let resolved: Vec<std::path::PathBuf> = if roots.is_empty() {
         config.data_roots.clone()
     } else {
-        roots.iter().map(|raw| discover::normalize_root(raw)).collect()
+        roots
+            .iter()
+            .map(|raw| discover::normalize_root(raw))
+            .collect()
     };
 
     if resolved.is_empty() {

@@ -202,9 +202,17 @@ pub fn split(data: &[u8]) -> Vec<Segment> {
         };
         if let Some((end, kind)) = candidate {
             if pending < cursor {
-                segments.push(Segment { start: pending, end: cursor, kind: "bin" });
+                segments.push(Segment {
+                    start: pending,
+                    end: cursor,
+                    kind: "bin",
+                });
             }
-            segments.push(Segment { start: cursor, end, kind });
+            segments.push(Segment {
+                start: cursor,
+                end,
+                kind,
+            });
             cursor = end;
             pending = end;
         } else {
@@ -212,7 +220,11 @@ pub fn split(data: &[u8]) -> Vec<Segment> {
         }
     }
     if pending < data.len() {
-        segments.push(Segment { start: pending, end: data.len(), kind: "bin" });
+        segments.push(Segment {
+            start: pending,
+            end: data.len(),
+            kind: "bin",
+        });
     }
     segments
 }
@@ -312,10 +324,24 @@ mod tests {
 
     #[test]
     fn opaque_and_unknown_data_are_preserved() {
-        assert_eq!(split(&[0u8; 64]), vec![Segment { start: 0, end: 64, kind: "bin" }]);
+        assert_eq!(
+            split(&[0u8; 64]),
+            vec![Segment {
+                start: 0,
+                end: 64,
+                kind: "bin"
+            }]
+        );
         let mut wxgf = b"wxgf\x13\x00\x00\x00".to_vec();
         wxgf.extend_from_slice(&tiny_png(&[1, 2, 3]));
-        assert_eq!(split(&wxgf), vec![Segment { start: 0, end: wxgf.len(), kind: "wxgf" }]);
+        assert_eq!(
+            split(&wxgf),
+            vec![Segment {
+                start: 0,
+                end: wxgf.len(),
+                kind: "wxgf"
+            }]
+        );
         assert!(split(&[]).is_empty());
     }
 
@@ -334,9 +360,12 @@ mod tests {
 
     #[test]
     fn truncated_inputs_keep_every_byte() {
-        let fixtures = [tiny_png(&[1, 2, 3]), tiny_gif(),
+        let fixtures = [
+            tiny_png(&[1, 2, 3]),
+            tiny_gif(),
             b"\xff\xd8\xff\xe0\x00\x02\xff\xd9".to_vec(),
-            b"RIFF\x04\x00\x00\x00WEBP".to_vec()];
+            b"RIFF\x04\x00\x00\x00WEBP".to_vec(),
+        ];
         for fixture in fixtures {
             for length in 0..=fixture.len() {
                 let body = &fixture[..length];

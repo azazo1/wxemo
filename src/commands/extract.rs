@@ -89,7 +89,11 @@ pub fn run_extract(options: ExtractOptions, interactive: bool) -> Result<()> {
             .to_path_buf();
         let pieces = build_pieces(&body, options.split_frames);
         let piece_bytes: usize = pieces.iter().map(|(chunk, _)| chunk.len()).sum();
-        anyhow::ensure!(piece_bytes == body.len(), "切分字节数不匹配: {}", path.display());
+        anyhow::ensure!(
+            piece_bytes == body.len(),
+            "切分字节数不匹配: {}",
+            path.display()
+        );
         plaintext_bytes += body.len();
 
         for (index, (chunk, kind)) in pieces.iter().enumerate() {
@@ -106,7 +110,9 @@ pub fn run_extract(options: ExtractOptions, interactive: bool) -> Result<()> {
             let mut out = options.out.join(&rel);
             let name = format!(
                 "{}{}.{}",
-                out.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+                out.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default(),
                 suffix,
                 kind
             );
@@ -115,8 +121,7 @@ pub fn run_extract(options: ExtractOptions, interactive: bool) -> Result<()> {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("创建目录失败: {}", parent.display()))?;
             }
-            fs::write(&out, chunk)
-                .with_context(|| format!("写入失败: {}", out.display()))?;
+            fs::write(&out, chunk).with_context(|| format!("写入失败: {}", out.display()))?;
             written += 1;
             output_bytes += chunk.len();
             entries.push(format!(
@@ -165,7 +170,10 @@ pub fn run_extract(options: ExtractOptions, interactive: bool) -> Result<()> {
 fn build_pieces(body: &[u8], split_frames: bool) -> Vec<(Vec<u8>, &'static str)> {
     let segments = container::split(body);
     if !split_frames || segments.is_empty() {
-        let kind = segments.first().map(|segment| segment.kind).unwrap_or("bin");
+        let kind = segments
+            .first()
+            .map(|segment| segment.kind)
+            .unwrap_or("bin");
         return vec![(body.to_vec(), kind)];
     }
     segments
@@ -228,9 +236,7 @@ fn resolve_key(options: &ExtractOptions, auth: &Auth, wxid: &str) -> Result<[u8;
     if let Some(secret) = auth.get(wxid) {
         return parse_key(&secret.key);
     }
-    bail!(
-        "没有 {wxid} 的密钥. 先运行 `wxemo seed` 求出来, 或用 --key/--seed 指定"
-    )
+    bail!("没有 {wxid} 的密钥. 先运行 `wxemo seed` 求出来, 或用 --key/--seed 指定")
 }
 
 /// 递归收集文件, 遍历失败时明确报错, 不静默遗漏子目录.
@@ -239,7 +245,9 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in entries {
         let entry = entry.with_context(|| format!("读取目录项失败: {}", dir.display()))?;
         let path = entry.path();
-        let kind = entry.file_type().with_context(|| format!("读取文件类型失败: {}", path.display()))?;
+        let kind = entry
+            .file_type()
+            .with_context(|| format!("读取文件类型失败: {}", path.display()))?;
         if kind.is_dir() {
             collect_files(&path, out)?;
         } else if kind.is_file() {
@@ -257,7 +265,11 @@ mod tests {
 
     fn tiny_png() -> Vec<u8> {
         let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-        for (kind, body) in [(&b"IHDR"[..], &[0u8; 13][..]), (b"IDAT", &[1, 2, 3]), (b"IEND", &[])] {
+        for (kind, body) in [
+            (&b"IHDR"[..], &[0u8; 13][..]),
+            (b"IDAT", &[1, 2, 3]),
+            (b"IEND", &[]),
+        ] {
             out.extend_from_slice(&(body.len() as u32).to_be_bytes());
             out.extend_from_slice(kind);
             out.extend_from_slice(body);
@@ -307,10 +319,15 @@ mod tests {
         body.extend_from_slice(&png);
         body.extend_from_slice(b"wxid_trailer");
         let pieces = build_pieces(&body, true);
-        let restored: Vec<u8> = pieces.iter().flat_map(|(chunk, _)| chunk.iter().copied()).collect();
+        let restored: Vec<u8> = pieces
+            .iter()
+            .flat_map(|(chunk, _)| chunk.iter().copied())
+            .collect();
         assert_eq!(restored, body);
-        assert_eq!(pieces.iter().map(|(_, kind)| *kind).collect::<Vec<_>>(),
-            ["bin", "png", "bin", "png", "bin"]);
+        assert_eq!(
+            pieces.iter().map(|(_, kind)| *kind).collect::<Vec<_>>(),
+            ["bin", "png", "bin", "png", "bin"]
+        );
         assert_eq!(build_pieces(&body, false)[0].0, body);
     }
 
@@ -320,9 +337,16 @@ mod tests {
         let mut png = tiny_png();
         // 把一个完整 GIF 放入 PNG 的 IDAT, 不应跨格式重复提取.
         let idat = 33;
-        png.splice(idat..idat + 15, [
-            &(gif.len() as u32).to_be_bytes()[..], &b"IDAT"[..], &gif[..], &[0; 4][..],
-        ].concat());
+        png.splice(
+            idat..idat + 15,
+            [
+                &(gif.len() as u32).to_be_bytes()[..],
+                &b"IDAT"[..],
+                &gif[..],
+                &[0; 4][..],
+            ]
+            .concat(),
+        );
         let pieces = build_pieces(&png, true);
         assert_eq!(pieces.len(), 1);
         assert_eq!(pieces[0].0, png);

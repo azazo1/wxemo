@@ -256,7 +256,10 @@ mod tests {
 
     #[test]
     fn wxid_suffix_is_stripped() {
-        assert_eq!(normalize_wxid("wxid_example123456_7e1e"), "wxid_example123456");
+        assert_eq!(
+            normalize_wxid("wxid_example123456_7e1e"),
+            "wxid_example123456"
+        );
         assert_eq!(normalize_wxid("wxid_example123456"), "wxid_example123456");
         // 尾部不是 4 位十六进制时保持原样
         assert_eq!(normalize_wxid("wxid_example_zzzz"), "wxid_example_zzzz");

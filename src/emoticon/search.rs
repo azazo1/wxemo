@@ -229,7 +229,10 @@ mod tests {
         let wxid = b"wxid_example123456";
         let mut message = [0u8; MAX_MESSAGE];
         let key = derive_key(seed, wxid, &mut message);
-        let samples = vec![sample("a.png", encrypt(&key, b"\x89PNG\r\n\x1a\n0123456789abcdef"))];
+        let samples = vec![sample(
+            "a.png",
+            encrypt(&key, b"\x89PNG\r\n\x1a\n0123456789abcdef"),
+        )];
 
         let spec = SearchSpec {
             start: 5000,

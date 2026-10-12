@@ -216,8 +216,12 @@ mod tests {
 
     #[test]
     fn padding_detects_bad_tail() {
-        assert!(valid_padding(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 3, 3]));
-        assert!(!valid_padding(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 3, 4]));
+        assert!(valid_padding(&[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 3, 3
+        ]));
+        assert!(!valid_padding(&[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 3, 3, 4
+        ]));
         assert!(!valid_padding(&[0u8; 16]));
     }
 
@@ -236,10 +240,22 @@ mod tests {
         // match_magic 只看 16 字节的块, 测试数据必须凑满 16 字节.
         assert_eq!(match_magic(b"\x89PNG\r\n\x1a\n01234567").unwrap().0, "png");
         assert_eq!(match_magic(b"GIF89a0123456789").unwrap().0, "gif");
-        assert_eq!(match_magic(b"\xff\xd8\xff\xe0012345678901").unwrap().0, "jpg");
-        assert_eq!(match_magic(b"wxgf\x13\x00\x00\x00012345678").unwrap().0, "wxgf");
-        assert_eq!(match_magic(b"RIFF\x24\x00\x00\x00WEBPVP8X").unwrap().0, "webp");
-        assert!(match_magic(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f").is_none());
+        assert_eq!(
+            match_magic(b"\xff\xd8\xff\xe0012345678901").unwrap().0,
+            "jpg"
+        );
+        assert_eq!(
+            match_magic(b"wxgf\x13\x00\x00\x00012345678").unwrap().0,
+            "wxgf"
+        );
+        assert_eq!(
+            match_magic(b"RIFF\x24\x00\x00\x00WEBPVP8X").unwrap().0,
+            "webp"
+        );
+        assert!(
+            match_magic(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f")
+                .is_none()
+        );
         // 不足 16 字节一律判为不识别, 避免越界比较
         assert!(match_magic(b"\x89PNG").is_none());
     }

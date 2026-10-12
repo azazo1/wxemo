@@ -4,7 +4,7 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::{Context, Result};
 
-use crate::config::{config_dir, config_path, auth_path, Auth, Config};
+use crate::config::{auth_path, config_dir, config_path, Auth, Config};
 use crate::discover;
 
 /// `wxemo config init`.
@@ -40,7 +40,10 @@ pub fn init(data_root: Option<String>, force: bool) -> Result<()> {
     }
 
     let root = discover::normalize_root(&raw);
-    let config = Config { data_roots: vec![root.clone()], ..Config::default() };
+    let config = Config {
+        data_roots: vec![root.clone()],
+        ..Config::default()
+    };
     config.save()?;
 
     println!("已写入配置: {}", path.display());
@@ -75,7 +78,11 @@ pub fn status() -> Result<()> {
     }
 
     let (config, initialized) = Config::load()?;
-    println!("配置文件: {} ({})", config_path().display(), if initialized { "已就绪" } else { "缺失" });
+    println!(
+        "配置文件: {} ({})",
+        config_path().display(),
+        if initialized { "已就绪" } else { "缺失" }
+    );
     println!("  格式版本: {}", config.version);
     if config.data_roots.is_empty() {
         println!("  数据根目录: 未配置");

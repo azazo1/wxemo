@@ -277,7 +277,13 @@ mod tests {
     #[test]
     fn parse_key_accepts_valid_and_rejects_invalid() {
         let text = "00112233445566778899aabbccddeeff";
-        assert_eq!(parse_key(text).unwrap(), [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        assert_eq!(
+            parse_key(text).unwrap(),
+            [
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff
+            ]
+        );
         assert!(parse_key("abcd").is_err());
         assert!(parse_key(&"z".repeat(32)).is_err());
         assert!(parse_key(&format!("a{}a", "界".repeat(10))).is_err());

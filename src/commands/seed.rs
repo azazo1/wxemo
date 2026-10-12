@@ -59,7 +59,9 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
     }
     let threads = options.threads.unwrap_or(config.search.threads);
     if threads > 0 {
-        let _ = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global();
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global();
     }
 
     let total = end - start;
@@ -67,7 +69,11 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
         start,
         end,
         candidates = total,
-        threads = if threads == 0 { rayon::current_num_threads() } else { threads },
+        threads = if threads == 0 {
+            rayon::current_num_threads()
+        } else {
+            threads
+        },
         "开始搜索"
     );
 
@@ -129,7 +135,11 @@ pub fn run_seed(options: SeedOptions, interactive: bool) -> Result<()> {
     println!("格式  = {}", hit.format);
     println!("填充合法 = {}", hit.padding_ok);
     println!("命中样本 = {}", hit.matched.join(", "));
-    println!("用时  = {:.1} 秒 ({:.0} 候选/秒)", elapsed.as_secs_f64(), rate);
+    println!(
+        "用时  = {:.1} 秒 ({:.0} 候选/秒)",
+        elapsed.as_secs_f64(),
+        rate
+    );
 
     auth.put(&matched_wxid, hit.seed, &hit.key);
     auth.save().context("写入密钥文件失败")?;
