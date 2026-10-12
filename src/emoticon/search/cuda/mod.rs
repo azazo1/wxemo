@@ -121,7 +121,7 @@ fn first_blocks(spec: &SearchSpec) -> Result<Vec<[u8; 16]>> {
 mod tests {
     use super::*;
     use crate::crypto::{derive_key, MAX_MESSAGE};
-    use crate::search::testing::three_formats;
+    use crate::search::testing::three_samples;
 
     fn spec_for(seed: u64, wxid: &[u8], start: u64, end: u64) -> SearchSpec {
         let mut message = [0u8; MAX_MESSAGE];
@@ -130,7 +130,7 @@ mod tests {
             start,
             end,
             wxids: vec![wxid.to_vec()],
-            samples: three_formats(&key),
+            samples: three_samples(&key),
         }
     }
 
