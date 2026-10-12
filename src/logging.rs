@@ -6,7 +6,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
 
 /// 环境变量名, 可覆盖日志级别.
-const ENV: &str = "SEEDSEARCH_LOG";
+const ENV: &str = "WXEMO_LOG";
 
 /// 初始化全局日志. `verbose` 为真时默认级别降到 debug.
 pub fn init(verbose: bool) {

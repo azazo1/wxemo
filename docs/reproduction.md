@@ -1,128 +1,81 @@
-# 从零复现
+# 使用说明
 
-目标: 从一台装了微信 4.x 的机器上, 把自定义表情包还原成可以直接查看的图片.
+## 配置与账号发现
 
-## 前置条件
-
-- Windows 微信 4.x 已登录过, 账号目录 `xwechat_files/<账号>/business/emoticon` 存在.
-- Rust 工具链 (stable) 与 Python 3.10 以上.
-- Python 侧需要 `pycryptodome`:
-
-  ```shell
-  pip install pycryptodome
-  ```
-
-## 第一步: 确认账号标识
-
-看账号目录名:
-
-```
-xwechat_files/wxid_example123456_7e1e/
-```
-
-去掉尾部的 `_7e1e` 之后, 剩下的 `wxid_example123456` 就是派生用的账号标识.
-**不要**把 `_7e1e` 带进去.
-
-## 第二步: 求出 seed
-
-`seed` 是 32 位无符号整数, 由微信在运行期生成, 只存在于 `Weixin.exe` 进程内存里,
-磁盘上没有. 因此用穷举法求:
+预编译 CLI 不需要 Python. 从源码开发时可用 `just run <参数>` 运行相同子命令.
 
 ```shell
-cd seedsearch
-cargo build --release
-
-./target/release/seedsearch \
-  --sample ../emoticon/Persist/aa/aab4337d6f48f3a15a830f7c0c98042b \
-  --sample ../emoticon/Persist/a1/a1171de0bff921ddab5bc384ed6593a5 \
-  --sample ../emoticon/Persist/de/dee2c5b317b91a19807af35f49b9119f \
-  --wxid wxid_example123456 \
-  --start 0 --end 4294967296 \
-  --out seed-result.txt
+wxemo config init --data-root <微信数据根目录>
+wxemo accounts
+wxemo doctor
 ```
 
-要点:
+数据目录的典型布局为 `xwechat_files/<账号>/business/emoticon`.
+`--data-root` 可以指向 `xwechat_files` 或其上层, 程序向下查找最多 5 层.
+账号目录 `wxid_example123456_7e1e` 对应账号标识 `wxid_example123456`.
+多个账号时, 在 `seed` 和 `extract` 中使用 `--account` 明确选择.
 
-- 样本至少要 3 个, 且取自不同的表情. 判定要求全部样本的首块都命中图片魔数,
-  样本越多误报越少. 3 个样本时误报期望已经低于 1e-5.
-- 样本文件需要是 16 字节的正整数倍 (微信的密文都是).
-- 范围 `0..4294967296` 覆盖全部 32 位取值. 16 核机器上大约 1.5 分钟.
+配置目录默认是 `~/.config/wxemo/`, `XDG_CONFIG_HOME` 和 `WXEMO_CONFIG_DIR` 可以覆盖.
+常规配置使用 `config.toml`, 账号密钥使用 `auth.json`, 两者带格式版本字段.
+密钥文件不能公开分享. `config status` 会显示密钥内容, 不要将输出贴到公开页面.
 
-命中后程序打印并写入 `seed-result.txt`:
-
-```
-seed  = <十进制整数>
-wxid  = wxid_xxxxxxxx
-key   = <32 位十六进制>
-格式  = png
-```
-
-## 第三步: 还原全部表情包
+## 搜索 seed
 
 ```shell
-python3 scripts/extract_emoticons.py <密文目录> out/emoticons --key <上一步的 key>
+wxemo seed --account wxid_example123456
 ```
 
-脚本做三件事:
+默认从持久化目录选取 3 个样本, 穷举 `0..4294967296`.
+候选必须让所有样本首块命中已知格式, 命中后检查整文件填充并保存密钥.
+可用 `--start`, `--end`, `--threads`, `--samples` 控制搜索范围和并行度.
+非交互运行时建议加全局参数 `--no-interactive`.
 
-1. 用 `AES-128-CBC(key, iv=key)` 解密每个文件, 去掉 PKCS#7 填充;
-2. 按魔数把多图拼接的容器切分;
-3. 校验每个切片 (PNG 会逐 chunk 校验 CRC), 按原目录层次写出.
+搜索可能持续数分钟, 进度条和阶段日志用于观察是否仍在推进.
+seed 的来源在二进制接口中是 64 位整数, `0..2^32` 是默认搜索范围,
+不是对所有微信版本取值范围的保证.
 
-输出示例:
-
-```
-解密文件 616 个, 写出图片 921 张
-格式分布: {'png': 346, 'wxgf': 265, 'jpg': 186, 'gif': 123, 'webp': 1}
-填充异常 0 个, PNG 结构异常 0 个
-```
-
-`填充异常` 与 `PNG 结构异常` 都应为 0. 如果不是 0, 说明密钥不对或程序有 bug.
-
-## 关于 wxgf 格式
-
-`.wxgf` 是微信自己的动图容器, 内部是 H.265/HEVC 码流. 它本身不加密,
-但需要转码才能当普通图片看:
+## 解密与输出
 
 ```shell
-ffmpeg -i input.wxgf -vf "split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" -loop 0 output.gif
+wxemo extract --account wxid_example123456 --out out/emoticons --manifest
 ```
 
-如果直接喂给 ffmpeg 失败, 尝试跳过文件头到第一个 VPS/SPS NAL 单元:
+也可用 `--key <32位十六进制>` 或 `--seed <整数>` 指定密钥来源.
+`--emoticon-dir <目录>` 跳过账号发现, 目录应保持 `<账号>/business/emoticon` 布局.
 
-```python
-markers = [pos for pos in (
-    data.find(b"\x00\x00\x00\x01\x40\x01"),  # VPS
-    data.find(b"\x00\x00\x00\x01\x42\x01"),  # SPS
-) if pos >= 0]
-start = min(markers) if markers else 0
-open("payload.h265", "wb").write(data[start:])
-```
+1. 按 AES-128-CBC 解密, IV 等于密钥.
+2. 只移除合法 PKCS#7 填充, 填充异常时保留解密结果并警告.
+3. 按 PNG / GIF / JPEG / WebP 的块结构顺序切分, 不扫描已识别片段的内部.
+4. 未识别的前缀, 间隙和尾注写为 `.bin`, wxgf 写为 `.wxgf`.
 
-## 常见问题
+输出保留原目录结构. 单片段文件追加格式扩展名,
+多片段追加 `.000`, `.001` 等顺序编号后再追加扩展名.
+按编号拼接同一个源文件的输出可恢复完整的去填充明文.
+`--no-split` 直接输出完整明文. `--manifest` 额外生成片段路径, 格式和大小清单.
 
-**搜完整个范围没有命中.** 依次检查:
+格式解析只负责确定边界, 不等价于图像解码或 PNG CRC 校验.
+总字节数校验可以发现数据遗漏, 但不能独立证明密钥正确.
 
-1. 账号标识是否带了目录后缀. 这是最常见的原因.
-2. 样本文件是否取自加密目录 (`Persist` / `PersistStore`), 而不是明文缓存.
-3. 微信版本是否与分析方法一致. 公式在大版本之间可能变化.
+## wxgf
 
-**`seed` 一定在 32 位范围内吗.** 二进制里 `seed` 来自 `[vtable+0x18]` 返回的
-64 位整数, 但实际取值远小于 2^32. 如果确实没命中, 可以扩大到 2^40 再试,
-代价是时间乘以 256.
+解密后的 wxgf 是微信私有容器, 可能包含 HEVC 码流.
+本工具尚未实现该容器的播放或转码, 也未确定其长度边界,
+因此从 wxgf 头部开始保留剩余明文, 不按内部魔数猜测拆分.
 
-**能不能直接从进程内存读 seed.** 可以, 而且比穷举快. 做法是扫描
-`Weixin.exe` 的内存找 8-10 位十进制整数候选, 逐个代入公式验证. 本项目的
-穷举路径不需要 Windows 环境, 在 Linux 上也能跑, 所以把它作为主路径.
+## 排查问题
 
-## 自验证
+搜索没有命中时, 检查账号选择, 输入是否来自加密的持久化目录,
+以及微信版本是否适用. 填充异常时核对账号, seed 与密钥, 不要直接删去末尾字节.
 
-改动搜索器之后, 跑一遍端到端自验证:
+`extract` 输出目录应位于输入目录之外, 避免把已输出文件再次当作输入.
+使用新的空输出目录可以避免上次运行留下的片段混入结果.
+
+## 开发验证
 
 ```shell
-python3 scripts/selfcheck.py seedsearch/target/release/seedsearch .tmp/selfcheck
+just test
+just lint
 ```
 
-它会用一个已知 seed 造出 PNG / GIF / JPEG 三种格式的密文样本,
-再让搜索器在小区间内把它们找回来. 这是为了确认 CBC 的 IV 异或、
-魔数判定、消息拼接这几处没有写错.
+测试覆盖已知种子的搜索, CBC 解密, 截断输入保留,
+容器边界, 嵌入魔数去重以及未知数据的逐字节重组.

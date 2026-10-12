@@ -1,14 +1,25 @@
 [package]
-name = "seedsearch"
+name = "wxemo"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
+description = "微信 4.x 自定义表情包的 seed 搜索与解密工具"
+license = "MIT"
+
+[[bin]]
+name = "wxemo"
+path = "src/main.rs"
 
 [dependencies]
 aes = "0.8"
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
 md-5 = "0.10"
 rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
 tracing = "0.1"
 tracing-indicatif = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

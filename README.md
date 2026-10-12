@@ -1,73 +1,60 @@
-# 微信 4.x 自定义表情包加密方案
+# wxemo
 
-对 Windows 微信 4.1.15 的 `Weixin.dll` 做静态分析, 还原自定义表情包的加解密方案,
-并给出从密文还原出图片的完整流程.
+微信 4.x 自定义表情包的账号发现, seed 搜索与无损解密工具.
+基于 Windows 微信 4.1.15.50 的静态分析, 处理本地表情数据, 不修改微信原始文件.
 
-## 结论
+## 快速使用
 
-```
-key       = MD5(f"{seed}{wxid}EMOTICON").digest()[:16]
-plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)   # PKCS#7 填充
-```
-
-- `wxid` 是账号标识, 取**不带**目录名尾部 `_xxxx` 后缀的形式.
-  例如目录名 `wxid_example123456_7e1e` 对应 `wxid_example123456`.
-- `seed` 是账号级随机种子, 只存在于运行中的 `Weixin.exe` 进程内存里, 磁盘上没有.
-- 密文解密后可能是一张图片, 也可能是**多张图片首尾相接**的容器, 需要再按魔数切分.
-
-## 用法
-
-需要 Rust 工具链, 以及 Python 3.10 以上 (仅解密脚本需要).
+从 [GitHub Release](https://github.com/azazo1/wxemo/releases) 下载对应平台的归档,
+解压后将 `wxemo` 放到 PATH. 支持 Windows, Linux 和 macOS 的 x86_64 / aarch64.
+Linux 归档使用 GNU 动态链接, 需要 glibc 2.39 或更新版本.
 
 ```shell
-# 1. 求出当前账号的 seed (暴力搜索, 16 核约 1.5 分钟)
-just search <账号目录>/business/emoticon
-
-# 2. 用求出的 key 还原全部表情包
-just extract <账号目录>/business/emoticon out/emoticons <key>
+wxemo config init --data-root <微信数据根目录>
+wxemo accounts
+wxemo seed
+wxemo extract --out out/emoticons --manifest
 ```
 
-也可以手动调用:
+多个账号时使用 `--account <账号标识或目录名>`. 根目录可以位于 `xwechat_files` 上层,
+程序会向下查找账号. 在 WSL 中会把 `D:/wechat` 转为 `/mnt/d/wechat`.
+
+- 配置保存在 `~/.config/wxemo/`, 可用 `WXEMO_CONFIG_DIR` 指定隔离目录.
+- `seed` 子命令保存账号对应的 seed 与密钥, `extract` 自动复用.
+- PNG / GIF / JPEG / WebP 按格式结构拆分. 未识别片段保留为 `.bin`.
+- `.wxgf` 原样保留, 不承诺直接播放或转码. 使用 `--no-split` 可保留整个明文容器.
+- `wxemo doctor` 检查配置与账号发现情况, `--verbose` 显示诊断日志.
+
+更多用法见 [使用说明](docs/reproduction.md), 数据格式见 [格式说明](docs/format-notes.md).
+
+## 从源码运行
+
+需要 Rust 1.88 或更新版本, just 和 uv. `just dist` 使用 Python 标准库打包,
+解释器由 uv 统一解析, 不依赖系统 tar / zip 或平台专用脚本.
 
 ```shell
-cd seedsearch && cargo build --release
-
-./target/release/seedsearch \
-  --sample <任意表情密文文件> --sample <另一个> --sample <第三个> \
-  --wxid <账号标识> \
-  --start 0 --end 4294967296 \
-  --out seed-result.txt
-
-python3 scripts/extract_emoticons.py <密文目录> <输出目录> --key <32 位十六进制>
+just build
+just test
+just lint
+just run --help
+just dist
 ```
 
-## 目录
+源码按命令层 `src/commands/` 与表情核心 `src/emoticon/` 组织.
+加密方案与反汇编证据见 [分析文档](docs/crypto-analysis.md).
 
+## 加密方案
+
+```text
+key       = MD5(f"{seed}{wxid}EMOTICON").digest()
+plaintext = AES-128-CBC(key, iv=key).decrypt(ciphertext)  # 去除合法 PKCS#7 填充
 ```
-docs/crypto-analysis.md   加密方案的证据链 (反汇编地址与推理过程)
-docs/reproduction.md      从零复现的完整步骤
-docs/format-notes.md      密文文件与容器的格式说明
-seedsearch/               多核 seed 暴力搜索器 (Rust)
-scripts/                  解密, 容器切分, 自验证脚本 (Python)
-```
 
-## 为什么需要暴力搜索 seed
-
-`seed` 由微信在运行期生成, 不落盘, 因此无法从磁盘直接读出. 它参与密钥派生,
-但空间有限 (32 位无符号整数), 所以可以穷举:
-
-对每个候选 seed 算出密钥, 解出样本文件的第一个分组, 看是否命中图片魔数.
-这个判定很快, 因为每个候选只需要一次 MD5 和几次 AES 分组解密.
-
-实测 16 核约 5000 万候选/秒, 搜完 2^32 约 1.5 分钟. 命中后会自动用整文件解密复核.
+账号标识不带目录末尾的 4 位十六进制后缀. 默认搜索范围为 `0..2^32`,
+可通过 `seed --start / --end / --threads` 调整. 搜索速度随 CPU 与样本变化.
 
 ## 免责声明
 
-本项目仅用于分析本地微信客户端自身的数据格式, 供学习和数据自查使用.
-
-- 只读取本机微信数据, 不修改微信的任何文件或数据库.
-- 不涉及网络通信, 不上传任何数据.
-- `seed` 与派生出的 `key` 是账号级密钥材料, **不要公开分享**.
-  本文档与代码中一律使用占位符, 不包含任何真实账号的值.
-
-请遵守当地法律法规, 不要用它处理他人的数据.
+仅用于学习和自查自己的本地微信数据. 不联网上传数据, 不修改微信数据库.
+seed 与 key 是账号级密钥材料, 不要分享密钥文件或包含它们的命令输出.
+本项目不保证适用于其他微信版本, 请遵守当地法律法规.

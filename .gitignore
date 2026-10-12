@@ -1,5 +1,5 @@
 # Rust
-seedsearch/target/
+target/
 
 # Python
 __pycache__/
@@ -9,6 +9,8 @@ venv/
 
 # 本地产物
 out/
+dist/
+secrets/
 .tmp/
 seed-result.txt
 

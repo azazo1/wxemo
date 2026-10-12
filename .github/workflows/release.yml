@@ -1,0 +1,229 @@
+name: CI and Release
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的已有 tag, 留空时只构建"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ inputs.tag != '' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      is_release: ${{ steps.context.outputs.is_release }}
+      tag_name: ${{ steps.context.outputs.tag_name }}
+      source_ref: ${{ steps.context.outputs.source_ref }}
+      version: ${{ steps.version.outputs.version }}
+      build_version: ${{ steps.version.outputs.build_version }}
+      archive_version: ${{ steps.version.outputs.archive_version }}
+    steps:
+      - name: 解析发布上下文
+        id: context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CURRENT_REF: ${{ github.ref }}
+          CURRENT_REF_NAME: ${{ github.ref_name }}
+          CURRENT_SHA: ${{ github.sha }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          is_release=false
+          tag_name=""
+          source_ref="$CURRENT_SHA"
+          if [[ "$EVENT_NAME" == push && "$CURRENT_REF" == refs/tags/* ]]; then
+            is_release=true
+            tag_name="$CURRENT_REF_NAME"
+          elif [[ "$EVENT_NAME" == workflow_dispatch && -n "$DISPATCH_TAG" ]]; then
+            is_release=true
+            tag_name="$DISPATCH_TAG"
+          fi
+          if [[ "$is_release" == true ]]; then
+            git check-ref-format "refs/tags/$tag_name"
+            source_ref="refs/tags/$tag_name"
+          fi
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.context.outputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+      - name: 校验发布版本并解析构建版本
+        id: version
+        env:
+          IS_RELEASE: ${{ steps.context.outputs.is_release }}
+          TAG_NAME: ${{ steps.context.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "wxemo") | .version')"
+          if [[ "$IS_RELEASE" == true ]]; then
+            [[ "$TAG_NAME" == "v$package_version" ]] || { echo "tag 与包版本不一致" >&2; exit 1; }
+            test -s "docs/changelog/$package_version.md"
+            echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          fi
+          build_version="$(PROJECT_PACKAGE_VERSION="$package_version" uv run --no-project python scripts/build-version.py --with-prefix)"
+          archive_version="$(uv run --no-project python scripts/build-version.py --strip-prefix="$build_version")"
+          if [[ "$IS_RELEASE" == true ]]; then
+            [[ "$build_version" == "$TAG_NAME" ]] || { echo "发布构建版本不匹配" >&2; exit 1; }
+          fi
+          echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
+          echo "archive_version=$archive_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    name: ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, platform: linux, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, platform: linux, arch: aarch64 }
+          - { runner: windows-2025, platform: windows, arch: x86_64 }
+          - { runner: windows-11-arm, platform: windows, arch: aarch64 }
+          - { runner: macos-15-intel, platform: macos, arch: x86_64 }
+          - { runner: macos-15, platform: macos, arch: aarch64 }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}-${{ matrix.arch }}
+      - name: 检查格式
+        run: cargo fmt --check
+      - name: 单元测试
+        run: cargo test --locked
+      - name: 严格静态检查
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: 构建并校验归档
+        env:
+          PROJECT_BUILD_VERSION: ${{ needs.version.outputs.build_version }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: uv run --no-project python scripts/dist.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wxemo-${{ needs.version.outputs.archive_version }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG_NAME: ${{ needs.version.outputs.tag_name }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wxemo-${{ needs.version.outputs.archive_version }}-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: 精确获取 tag 并校验 annotation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$TAG_NAME"
+          git fetch --force origin "refs/tags/$TAG_NAME:refs/tags/$TAG_NAME"
+          [[ "$(git rev-parse HEAD)" == "$(git rev-parse "refs/tags/$TAG_NAME^{}")" ]]
+          [[ "$(git cat-file -t "refs/tags/$TAG_NAME")" == tag ]] || { echo "必须使用 annotated tag" >&2; exit 1; }
+          manual_notes="docs/changelog/$VERSION.md"
+          test -s "$manual_notes"
+          git cat-file tag "refs/tags/$TAG_NAME" | sed '1,/^$/d' > tag-notes.md
+          test -s tag-notes.md
+          cmp "$manual_notes" tag-notes.md
+      - name: 生成发布说明
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_args=(--method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f "tag_name=$TAG_NAME" -f "target_commitish=$(git rev-parse HEAD)")
+          base_file="docs/changelog/$VERSION-base.txt"
+          if [[ -s "$base_file" ]]; then
+            base_tag="$(<"$base_file")"
+            git check-ref-format "refs/tags/$base_tag"
+            api_args+=(-f "previous_tag_name=$base_tag")
+          fi
+          gh api "${api_args[@]}" --jq '.body' > generated-notes.md
+          cp "docs/changelog/$VERSION.md" release-notes.md
+          if [[ -s generated-notes.md ]]; then
+            printf '\n---\n\n' >> release-notes.md
+            cat generated-notes.md >> release-notes.md
+          fi
+      - name: 校验产物集合并生成校验和
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd release-artifacts
+          archives=(wxemo-*.tar.gz wxemo-*.zip)
+          [[ ${#archives[@]} -eq 6 ]] || { echo "归档数量必须为 6" >&2; exit 1; }
+          for platform in linux macos windows; do
+            ext=tar.gz
+            if [[ "$platform" == windows ]]; then ext=zip; fi
+            for arch in x86_64 aarch64; do
+              test -s "wxemo-$VERSION-$platform-$arch.$ext"
+            done
+          done
+          sha256sum "${archives[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: 创建或更新 GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(release-artifacts/wxemo-*.tar.gz release-artifacts/wxemo-*.zip release-artifacts/SHA256SUMS)
+          [[ ${#assets[@]} -eq 7 ]]
+          for asset in "${assets[@]}"; do test -s "$asset"; done
+          prerelease=false
+          if [[ "$VERSION" == *-* ]]; then prerelease=true; fi
+          if gh release view "$TAG_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "${assets[@]}" --clobber -R "$GITHUB_REPOSITORY"
+            gh release edit "$TAG_NAME" --verify-tag --title "wxemo v$VERSION" --notes-file release-notes.md --draft=false --prerelease="$prerelease" -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG_NAME" "${assets[@]}" --draft --verify-tag --title "wxemo v$VERSION" --notes-file release-notes.md --prerelease="$prerelease" -R "$GITHUB_REPOSITORY"
+            gh release edit "$TAG_NAME" --draft=false -R "$GITHUB_REPOSITORY"
+          fi
