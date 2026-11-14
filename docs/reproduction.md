@@ -271,7 +271,12 @@ wxemo decode out/emoticons --out out/images --decoder-lib <可信的原生媒体
 `decode` 使用用户本机已有的版本化 `wxam_dec_wxam2pic_5` 接口, `mode=2` 输出 PNG/APNG,
 保留全部动画帧, 循环信息, 逐帧时长和 RGBA 透明度, 不转换成只有二值透明度的 GIF.
 
-- macOS 自动查找系统或用户 Applications 下已有微信的 `MultiMediaDyn.framework`.
+- macOS 自动查找系统或用户 Applications 下已有微信的 `MultiMediaDyn.framework`,
+  优先加载 `Contents/Resources` 下的实际实现, 旧版布局回退到 `Contents/Frameworks`.
+  微信 4.1.15 的 `Contents/Frameworks` 版本只是转发库, 单独加载会因空函数指针崩溃.
+  已遇到所有文件都报 `SIGSEGV` 时, 可通过
+  `--decoder-lib /Applications/WeChat.app/Contents/Resources/MultiMediaDyn.framework/MultiMediaDyn`
+  显式选择实际实现.
 - Windows 自动查找常见 Tencent 安装目录及版本子目录中的 `VoipEngine.dll`.
   非默认位置用 `--decoder-lib` 指定, 依赖 DLL 需与媒体库同目录或位于系统安全搜索目录.
 - Linux 不承诺存在可用媒体库, 需要显式提供当前系统和架构兼容的原生库.

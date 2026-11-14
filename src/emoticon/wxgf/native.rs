@@ -17,17 +17,12 @@ pub fn find_library(explicit: Option<&Path>) -> Result<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        let suffix =
-            Path::new("WeChat.app/Contents/Frameworks/MultiMediaDyn.framework/MultiMediaDyn");
         let mut roots = vec![PathBuf::from("/Applications")];
         if let Some(home) = std::env::var_os("HOME") {
             roots.push(PathBuf::from(home).join("Applications"));
         }
-        for root in roots {
-            let path = root.join(suffix);
-            if path.is_file() {
-                return checked_library_path(&path);
-            }
+        if let Some(path) = find_macos_library(&roots) {
+            return checked_library_path(&path);
         }
     }
     #[cfg(windows)]
@@ -60,6 +55,24 @@ pub fn find_library(explicit: Option<&Path>) -> Result<PathBuf> {
         }
     }
     bail!("找不到微信原生 WXAM 解码库. macOS 需要已有的 WeChat.app, Windows 需要已有的 VoipEngine.dll; 自定义位置或 Linux 使用 --decoder-lib 指定兼容库. 不会退化成仅导出首帧")
+}
+
+#[cfg(target_os = "macos")]
+fn find_macos_library(roots: &[PathBuf]) -> Option<PathBuf> {
+    for root in roots {
+        let contents = root.join("WeChat.app/Contents");
+        // 微信 4.1.15 的 Frameworks 版本仅转发到未初始化的函数指针,
+        // 直接调用会跳转到空地址. 实际实现位于 Resources, 必须优先使用.
+        for directory in ["Resources", "Frameworks"] {
+            let path = contents
+                .join(directory)
+                .join("MultiMediaDyn.framework/MultiMediaDyn");
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 fn checked_library_path(path: &Path) -> Result<PathBuf> {
@@ -128,4 +141,26 @@ pub fn decode(data: &[u8], path: &Path) -> Result<(Vec<u8>, ImageInfo)> {
         "原生解码结果已通过容器校验"
     );
     Ok((output, info))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_prefers_implementation_over_forwarder_and_supports_older_layout() {
+        let root = tempfile::tempdir().unwrap();
+        let contents = root.path().join("WeChat.app/Contents");
+        let library = "MultiMediaDyn.framework/MultiMediaDyn";
+        let forwarder = contents.join("Frameworks").join(library);
+        std::fs::create_dir_all(forwarder.parent().unwrap()).unwrap();
+        std::fs::write(&forwarder, b"legacy library or forwarder").unwrap();
+        let roots = [root.path().to_path_buf()];
+        assert_eq!(find_macos_library(&roots), Some(forwarder));
+
+        let implementation = contents.join("Resources").join(library);
+        std::fs::create_dir_all(implementation.parent().unwrap()).unwrap();
+        std::fs::write(&implementation, b"actual decoder").unwrap();
+        assert_eq!(find_macos_library(&roots), Some(implementation));
+    }
 }
