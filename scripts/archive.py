@@ -30,6 +30,7 @@ import tarfile
 import time
 import zipfile
 
+from output_encoding import configure_output_encoding
 import release_common as rc
 
 
@@ -93,7 +94,7 @@ def make_archive(archive_path, staging, entries, ext):
 
 
 def main():
-    rc.configure_output_encoding()
+    configure_output_encoding()
 
     project_name = os.environ.get("PROJECT_NAME", "").strip()
     if not project_name:

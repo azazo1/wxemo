@@ -21,7 +21,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueHint};
 
 use commands::extract::ExtractOptions;
 use commands::seed::SeedOptions;
@@ -72,6 +72,14 @@ enum Command {
         decoder_lib: PathBuf,
     },
 
+    /// 输出指定 shell 的补全脚本到标准输出.
+    #[command(alias = "completions")]
+    Completion {
+        /// 目标 shell.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// 检查环境与配置是否就绪.
     Doctor(DoctorArgs),
 }
@@ -81,7 +89,7 @@ enum ConfigCommand {
     /// 交互式初始化配置.
     Init {
         /// 微信数据根目录, 省略时自动发现系统默认位置.
-        #[arg(long)]
+        #[arg(long, value_hint = ValueHint::DirPath)]
         data_root: Option<String>,
         /// 覆盖已存在的配置.
         #[arg(long)]
@@ -94,6 +102,7 @@ enum ConfigCommand {
     /// 追加一个数据根目录.
     SetRoot {
         /// 根目录路径, 例如 D:/wechat.
+        #[arg(value_hint = ValueHint::DirPath)]
         path: String,
     },
 }
@@ -101,7 +110,7 @@ enum ConfigCommand {
 #[derive(Args, Debug)]
 struct AccountsArgs {
     /// 额外/替代的数据根目录, 可重复.
-    #[arg(long = "data-root")]
+    #[arg(long = "data-root", value_hint = ValueHint::DirPath)]
     data_roots: Vec<String>,
 }
 
@@ -164,11 +173,11 @@ struct SeedArgs {
     account: Option<String>,
 
     /// 直接指定表情包密文目录, 跳过账号发现.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::DirPath)]
     emoticon_dir: Option<PathBuf>,
 
     /// 额外/替代的数据根目录, 可重复.
-    #[arg(long = "data-root")]
+    #[arg(long = "data-root", value_hint = ValueHint::DirPath)]
     data_roots: Vec<String>,
 
     /// 搜索起点 (含), 默认取配置.
@@ -189,7 +198,7 @@ struct SeedArgs {
 
     /// 搜索后端: auto 按本机能力选择 (CUDA 优先, 其次 SIMD, 最后标量),
     /// cpu 只用标量多核, simd 要求 SIMD 多路, cuda 强制走 GPU (不可用时直接报错).
-    #[arg(long, default_value_t = search::Backend::Auto)]
+    #[arg(long, default_value_t = search::Backend::Auto, value_enum)]
     backend: search::Backend,
 }
 
@@ -200,11 +209,11 @@ struct ExtractArgs {
     account: Option<String>,
 
     /// 直接指定表情包密文目录.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::DirPath)]
     emoticon_dir: Option<PathBuf>,
 
     /// 输出目录.
-    #[arg(long, short, default_value = "out/emoticons")]
+    #[arg(long, short, default_value = "out/emoticons", value_hint = ValueHint::DirPath)]
     out: PathBuf,
 
     /// 直接指定 32 位十六进制密钥, 优先于配置.
@@ -216,7 +225,7 @@ struct ExtractArgs {
     seed: Option<u64>,
 
     /// 额外/替代的数据根目录, 可重复.
-    #[arg(long = "data-root")]
+    #[arg(long = "data-root", value_hint = ValueHint::DirPath)]
     data_roots: Vec<String>,
 
     /// 多帧容器不拆分, 整段输出.
@@ -234,7 +243,7 @@ struct DecodeArgs {
     input: PathBuf,
 
     /// 输出目录, 动画与静态图片均保存为 .png, 不覆盖已有文件.
-    #[arg(long, short, default_value = "out/decoded")]
+    #[arg(long, short, default_value = "out/decoded", value_hint = ValueHint::DirPath)]
     out: PathBuf,
 
     /// 用户已有的可信 WXAM 动态库, 不下载或分发微信媒体库.
@@ -249,11 +258,15 @@ struct DecodeArgs {
 #[derive(Args, Debug)]
 struct DoctorArgs {
     /// 额外/替代的数据根目录, 可重复.
-    #[arg(long = "data-root")]
+    #[arg(long = "data-root", value_hint = ValueHint::DirPath)]
     data_roots: Vec<String>,
 }
 
 fn main() -> ExitCode {
+    // 补全请求只解析命令树, 必须先于日志初始化和任何账号访问处理.
+    clap_complete::CompleteEnv::with_factory(Cli::command)
+        .var(commands::completion::COMPLETE_ENV)
+        .complete();
     let cli = Cli::parse();
     logging::init(cli.verbose);
 
@@ -332,6 +345,7 @@ fn main() -> ExitCode {
             out,
             decoder_lib,
         } => commands::decode::run_worker(&input, &out, &decoder_lib),
+        Command::Completion { shell } => commands::completion::run(shell),
         Command::Doctor(args) => commands::doctor::run(&args.data_roots),
     };
 

@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 
+from output_encoding import configure_output_encoding
 import release_common as rc
 
 # 版本 tag 前缀, 与项目的 tag 惯例保持一致.
@@ -159,7 +160,7 @@ def compute_display_version():
 
 
 def main():
-    rc.configure_output_encoding()
+    configure_output_encoding()
 
     parser = argparse.ArgumentParser(description="计算构建版本号")
     group = parser.add_mutually_exclusive_group()

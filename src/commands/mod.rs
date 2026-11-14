@@ -1,6 +1,7 @@
 //! 子命令实现.
 
 pub mod accounts;
+pub mod completion;
 pub mod config;
 pub mod decode;
 pub mod doctor;

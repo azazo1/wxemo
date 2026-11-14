@@ -13,17 +13,7 @@ import subprocess
 import sys
 
 
-def configure_output_encoding():
-    """把 stdout 与 stderr 切到 UTF-8.
-
-    Windows 控制台默认是本地代码页, 输出中文会抛 UnicodeEncodeError,
-    而 GitHub Actions 日志按 UTF-8 解码, 所以统一按 UTF-8 输出.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")
-        except (AttributeError, ValueError, OSError):
-            pass
+from output_encoding import configure_output_encoding
 
 
 def die(message):
@@ -187,6 +177,54 @@ def check_binary_format(path, expected_platform):
     if not any(header.startswith(magic) for magic in expected):
         die(f"{path} 的文件头不符合 {expected_platform} 可执行文件格式: {header!r}")
     print(f"文件格式检查通过: {path} ({expected_platform})")
+
+
+def check_binary_arch(path, expected_platform, expected_arch):
+    """核对 ELF, Mach-O 或 PE 头中的架构, 防止产物命名与内容不符."""
+    machines = {
+        "linux": {"x86_64": 62, "aarch64": 183},
+        "macos": {"x86_64": 0x01000007, "aarch64": 0x0100000C},
+        "windows": {"x86_64": 0x8664, "aarch64": 0xAA64},
+    }
+    wanted = machines.get(expected_platform, {}).get(expected_arch)
+    if wanted is None:
+        die(f"未定义架构校验: {expected_platform}-{expected_arch}")
+    with open(path, "rb") as handle:
+        header = handle.read(64)
+        if len(header) < 64:
+            die(f"可执行文件头不完整: {path}")
+        if expected_platform == "linux":
+            if header[:4] != b"\x7fELF" or header[5] not in (1, 2):
+                die(f"无效的 ELF 文件头: {path}")
+            order = "little" if header[5] == 1 else "big"
+            actual = int.from_bytes(header[18:20], order)
+        elif expected_platform == "macos":
+            if header[:4] == b"\xcf\xfa\xed\xfe":
+                order = "little"
+            elif header[:4] == b"\xfe\xed\xfa\xcf":
+                order = "big"
+            else:
+                die(f"预期单架构的 64 位 Mach-O 文件: {path}")
+            actual = int.from_bytes(header[4:8], order)
+        else:
+            if header[:2] != b"MZ":
+                die(f"无效的 PE 文件头: {path}")
+            handle.seek(int.from_bytes(header[0x3C:0x40], "little"))
+            pe_header = handle.read(6)
+            if len(pe_header) != 6 or pe_header[:4] != b"PE\x00\x00":
+                die(f"无效的 PE 签名: {path}")
+            actual = int.from_bytes(pe_header[4:6], "little")
+    if actual != wanted:
+        die(f"{path} 的架构不符: 实际 {actual:#x}, 预期 {wanted:#x}")
+    print(f"架构检查通过: {path} ({expected_platform}-{expected_arch})")
+
+
+def check_version_string(path, expected_version):
+    """交叉编译产物无法执行时, 核对二进制包含注入的版本串."""
+    with open(path, "rb") as handle:
+        if expected_version.encode("utf-8") not in handle.read():
+            die(f"产物未包含预期版本 {expected_version}: {path}")
+    print(f"版本串检查通过: {expected_version}")
 
 
 def archive(

@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 
+from output_encoding import configure_output_encoding
 import release_common as rc
 
 # 只改下面几个常量:
@@ -37,8 +38,31 @@ def package_version_fallback():
     return None
 
 
+def generate_completions(binary_path, staging):
+    """由本次 CLI 命令树生成脚本, 交叉编译时使用宿主平台的开发构建."""
+    generator = [binary_path]
+    if RUST_TARGET:
+        generator = ["cargo", "run", "--quiet", "--locked", "--bin", BINARY_NAME, "--"]
+    completion_dir = os.path.join(staging, "completions")
+    os.makedirs(completion_dir)
+    scripts = {
+        "bash": "wxemo.bash",
+        "zsh": "_wxemo",
+        "fish": "wxemo.fish",
+        "powershell": "_wxemo.ps1",
+        "elvish": "wxemo.elv",
+    }
+    for shell, filename in scripts.items():
+        script = rc.run([*generator, "completion", shell])
+        if not script:
+            rc.die(f"{shell} 补全脚本为空")
+        with open(os.path.join(completion_dir, filename), "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(script + "\n")
+    print(f"已生成 {len(scripts)} 种 shell 的补全脚本")
+
+
 def main():
-    rc.configure_output_encoding()
+    configure_output_encoding()
     rc.repo_root()
 
     target_platform = rc.target_platform()
@@ -65,15 +89,23 @@ def main():
     binary_path = os.path.join(staging, binary)
     shutil.copy(os.path.join(build_dir, binary), binary_path)
 
+    rc.check_binary_format(binary_path, target_platform)
+    rc.check_binary_arch(binary_path, target_platform, target_arch)
+    if target_platform != "windows" and not os.access(binary_path, os.X_OK):
+        rc.die(f"产物缺少可执行权限: {binary_path}")
     if RUST_TARGET:
-        print("交叉编译产物无法本机执行, 只检查文件格式")
-        rc.check_binary_format(binary_path, target_platform)
+        print("交叉编译产物无法本机执行, 检查嵌入的版本串")
+        rc.check_version_string(binary_path, display_version)
     else:
         rc.smoke_check([binary_path], SMOKE_ARGS, display_version)
 
+    generate_completions(binary_path, staging)
+    for filename in ("README.md", "LICENSE"):
+        shutil.copy(filename, staging)
+    shutil.copy("docs/completion.md", os.path.join(staging, "completions", "README.md"))
     rc.archive(
         staging,
-        [binary],
+        [binary, "completions", "README.md", "LICENSE"],
         PROJECT_NAME,
         archive_version,
         target=(target_platform, target_arch),

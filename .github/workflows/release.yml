@@ -95,9 +95,11 @@ jobs:
     needs: version
     name: ${{ matrix.platform }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
     env:
       # 需要 CUDA 的产物在这里带上 feature, 其余平台保持默认构建.
-      CARGO_EXTRA_ARGS: ${{ matrix.cuda && '--features cuda' || '' }}
       WXEMO_CARGO_FEATURES: ${{ matrix.cuda && 'cuda' || '' }}
     strategy:
       fail-fast: false
@@ -145,17 +147,25 @@ jobs:
           Write-Host "使用 nvcc: $($nvcc.FullName)"
           "WXEMO_CUDA_NVCC=$($nvcc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: 检查格式
-        run: cargo fmt --check
+        run: |
+          set -euo pipefail
+          cargo fmt --check
       - name: 单元测试
-        run: cargo test --locked $CARGO_EXTRA_ARGS
+        run: |
+          set -euo pipefail
+          cargo test --locked --features "$WXEMO_CARGO_FEATURES"
       - name: 严格静态检查
-        run: cargo clippy --locked --all-targets $CARGO_EXTRA_ARGS -- -D warnings
+        run: |
+          set -euo pipefail
+          cargo clippy --locked --all-targets --features "$WXEMO_CARGO_FEATURES" -- -D warnings
       - name: 构建并校验归档
         env:
           PROJECT_BUILD_VERSION: ${{ needs.version.outputs.build_version }}
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
-        run: uv run --no-project python scripts/dist.py
+        run: |
+          set -euo pipefail
+          uv run --no-project python scripts/dist.py
       - uses: actions/upload-artifact@v7
         with:
           name: wxemo-${{ needs.version.outputs.archive_version }}-${{ matrix.platform }}-${{ matrix.arch }}
@@ -242,7 +252,7 @@ jobs:
           [[ ${#assets[@]} -eq 7 ]]
           for asset in "${assets[@]}"; do test -s "$asset"; done
           prerelease=false
-          if [[ "$VERSION" == *-* ]]; then prerelease=true; fi
+          if [[ "$VERSION" =~ ^[0-9]+([.][0-9]+)*[-] ]]; then prerelease=true; fi
           if gh release view "$TAG_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG_NAME" "${assets[@]}" --clobber -R "$GITHUB_REPOSITORY"
             gh release edit "$TAG_NAME" --verify-tag --title "wxemo v$VERSION" --notes-file release-notes.md --draft=false --prerelease="$prerelease" -R "$GITHUB_REPOSITORY"
@@ -250,3 +260,95 @@ jobs:
             gh release create "$TAG_NAME" "${assets[@]}" --draft --verify-tag --title "wxemo v$VERSION" --notes-file release-notes.md --prerelease="$prerelease" -R "$GITHUB_REPOSITORY"
             gh release edit "$TAG_NAME" --draft=false -R "$GITHUB_REPOSITORY"
           fi
+
+  prerelease:
+    name: 更新滚动预发布
+    needs: [version, build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && needs.version.outputs.is_release != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: rolling-prerelease
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BRANCH: ${{ github.ref_name }}
+      COMMIT: ${{ github.sha }}
+      BUILD_VERSION: ${{ needs.version.outputs.build_version }}
+      ARCHIVE_VERSION: ${{ needs.version.outputs.archive_version }}
+    steps:
+      - name: 下载本轮构建产物
+        uses: actions/download-artifact@v8
+        with:
+          pattern: wxemo-${{ needs.version.outputs.archive_version }}-*
+          path: prerelease-artifacts
+          merge-multiple: true
+      - name: 校验产物集合并生成校验和
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd prerelease-artifacts
+          archives=(wxemo-*.tar.gz wxemo-*.zip)
+          [[ ${#archives[@]} -eq 6 ]] || { echo "归档数量必须为 6" >&2; exit 1; }
+          for platform in linux macos windows; do
+            ext=tar.gz
+            if [[ "$platform" == windows ]]; then ext=zip; fi
+            for arch in x86_64 aarch64; do
+              test -s "wxemo-$ARCHIVE_VERSION-$platform-$arch.$ext"
+            done
+          done
+          sha256sum "${archives[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: 确认提交仍是分支 HEAD
+        id: freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_branches="$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$COMMIT/branches-where-head" --jq '.[].name')"
+          is_latest=false
+          if grep -Fxq -- "$BRANCH" <<< "$head_branches"; then
+            is_latest=true
+          else
+            echo "::notice::分支 HEAD 已变化, 跳过本次滚动预发布"
+          fi
+          echo "is_latest=$is_latest" >> "$GITHUB_OUTPUT"
+      - name: 创建或更新滚动预发布
+        if: steps.freshness.outputs.is_latest == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag=dev-latest
+          assets=(prerelease-artifacts/wxemo-*.tar.gz prerelease-artifacts/wxemo-*.zip prerelease-artifacts/SHA256SUMS)
+          [[ ${#assets[@]} -eq 7 ]] || { echo "发布文件数量必须为 7" >&2; exit 1; }
+          for asset in "${assets[@]}"; do test -s "$asset"; done
+          {
+            printf '分支 `%s` 的滚动预发布, 产物会被后续分支 push 替换.\n\n' "$BRANCH"
+            printf -- '- 提交: [`%.7s`](%s/%s/commit/%s)\n' "$COMMIT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$COMMIT"
+            printf -- '- 构建版本: `%s`\n\n' "$BUILD_VERSION"
+            printf '此 release 的 tag 固定在首次创建时的提交, 最新产物对应的提交以上方链接为准.\n'
+          } > prerelease-notes.md
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+          else
+            # 先以草稿上传完整资产, 成功后才公开, 固定 tag 创建后不再移动.
+            gh release create "$tag" "${assets[@]}" --draft --target "$COMMIT" --title "wxemo 最新构建 $BUILD_VERSION" --notes-file prerelease-notes.md --prerelease --latest=false
+          fi
+          gh release edit "$tag" --draft=false --title "wxemo 最新构建 $BUILD_VERSION" --notes-file prerelease-notes.md --prerelease --latest=false
+          current_names=()
+          for asset in "${assets[@]}"; do current_names+=("$(basename "$asset")"); done
+          # 先确认新资产全部上传成功, 再删除旧资产, 固定 tag 始终不变.
+          old_assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          while IFS= read -r asset; do
+            [[ -n "$asset" ]] || continue
+            keep=false
+            for name in "${current_names[@]}"; do
+              if [[ "$asset" == "$name" ]]; then keep=true; break; fi
+            done
+            if [[ "$keep" == false ]]; then
+              gh release delete-asset "$tag" "$asset" --yes
+            fi
+          done <<< "$old_assets"

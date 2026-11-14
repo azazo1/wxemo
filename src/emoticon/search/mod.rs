@@ -88,7 +88,7 @@ pub struct Hit {
 }
 
 /// 用户在命令行上请求的后端.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Backend {
     /// 按本机能力自动选择: CUDA 优先, 其次 Metal, 再次 SIMD, 最后标量.
     #[default]

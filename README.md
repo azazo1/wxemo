@@ -25,6 +25,9 @@ wxemo decode out/emoticons --out out/images
 多个账号时使用 `--account <账号标识或目录名>`. 根目录可以位于 `xwechat_files` 上层,
 程序会向下查找账号. 在 WSL 中会把 `D:/wechat` 转为 `/mnt/d/wechat`.
 
+使用 `wxemo completion <shell>` 输出 Bash, Zsh, Fish, PowerShell 或 Elvish 的补全脚本.
+发布归档也附带 `completions/` 目录, 安装方法见 [Shell 补全](docs/completion.md).
+
 - 配置保存在 `~/.config/wxemo/`, 可用 `WXEMO_CONFIG_DIR` 指定隔离目录.
 - `seed search` 搜索并保存, `seed status` 查看状态, `seed import` 导入已知值或备份,
   `seed export` 导出敏感备份文件, `seed remove` 删除记录. `extract` 自动复用保存的密钥.
