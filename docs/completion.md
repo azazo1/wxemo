@@ -2,7 +2,7 @@
 
 `wxemo completion <shell>` 将补全脚本写入标准输出. 支持 `bash`, `zsh`, `fish`, `powershell` 和 `elvish`, 覆盖子命令, 全局参数, 搜索后端枚举以及文件和目录路径. 脚本由 clap_complete 从当前版本的 CLI 定义生成, 不查询微信账号或密钥.
 
-发布归档的 `completions/` 目录包含相同脚本, 可直接安装或加载. 补全时会调用 PATH 中的 `wxemo`, 因此需要先把可执行文件放入 PATH. 更新 wxemo 后重新生成或复制对应脚本, 然后重新加载.
+补全脚本由 clap_complete 从当前 CLI 定义生成, 只是薄薄一层注册: 补全时调用 PATH 中的 `wxemo` 取候选, 因此需要先把可执行文件放入 PATH, 不要把它当静态列表缓存下来. 更新 wxemo 后按原命令重新生成并加载一次即可.
 
 ## Fish
 
@@ -49,7 +49,7 @@ wxemo completion bash > ~/.local/share/bash-completion/completions/wxemo
 wxemo completion powershell | Out-String | Invoke-Expression
 ```
 
-需要持久生效时, 将这行加入自己的 PowerShell profile. 也可用 dot sourcing 加载发布归档中的 `completions/_wxemo.ps1`.
+需要持久生效时, 将这行加入自己的 PowerShell profile.
 
 ## Elvish
 

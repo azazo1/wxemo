@@ -38,29 +38,6 @@ def package_version_fallback():
     return None
 
 
-def generate_completions(binary_path, staging):
-    """由本次 CLI 命令树生成脚本, 交叉编译时使用宿主平台的开发构建."""
-    generator = [binary_path]
-    if RUST_TARGET:
-        generator = ["cargo", "run", "--quiet", "--locked", "--bin", BINARY_NAME, "--"]
-    completion_dir = os.path.join(staging, "completions")
-    os.makedirs(completion_dir)
-    scripts = {
-        "bash": "wxemo.bash",
-        "zsh": "_wxemo",
-        "fish": "wxemo.fish",
-        "powershell": "_wxemo.ps1",
-        "elvish": "wxemo.elv",
-    }
-    for shell, filename in scripts.items():
-        script = rc.run([*generator, "completion", shell])
-        if not script:
-            rc.die(f"{shell} 补全脚本为空")
-        with open(os.path.join(completion_dir, filename), "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(script + "\n")
-    print(f"已生成 {len(scripts)} 种 shell 的补全脚本")
-
-
 def main():
     configure_output_encoding()
     rc.repo_root()
@@ -99,13 +76,11 @@ def main():
     else:
         rc.smoke_check([binary_path], SMOKE_ARGS, display_version)
 
-    generate_completions(binary_path, staging)
     for filename in ("README.md", "LICENSE"):
         shutil.copy(filename, staging)
-    shutil.copy("docs/completion.md", os.path.join(staging, "completions", "README.md"))
     rc.archive(
         staging,
-        [binary, "completions", "README.md", "LICENSE"],
+        [binary, "README.md", "LICENSE"],
         PROJECT_NAME,
         archive_version,
         target=(target_platform, target_arch),
